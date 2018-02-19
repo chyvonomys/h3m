@@ -26,55 +26,44 @@ macro_rules! eat_option (
     );
 );
 
-macro_rules! eat_vector_8 (
-    ($i:expr, $submac:ident!( $($args:tt)* )) => (
-        do_parse!($i,
-            n: eat_8 >>
-            xs: count!($submac!($($args)*), n as usize) >>
-            (xs)
-        )
-    );
-    ($i:expr, $f:expr) => (
-        eat_vector_8!($i, call!($f))
-    );
-);
+macro_rules! h3m_enum {
+    ( <$t:ident, $f:ident, $p:ident, $d:ty> ($i0:expr, $x0:ident, $o0:expr) $( ($i:expr, $x:ident, $o:expr) )* ) => (
+        #[derive(Debug)]
+        enum $t {
+            $x0 $( , $x )*
+        }
 
-macro_rules! eat_vector_16 (
-    ($i:expr, $submac:ident!( $($args:tt)* )) => (
-        do_parse!($i,
-            n: eat_16 >>
-            xs: count!($submac!($($args)*), n as usize) >>
-            (xs)
-        )
-    );
-    ($i:expr, $f:expr) => (
-        eat_vector_16!($i, call!($f))
-    );
-);
+        named!($f<$t>, switch!($p,
+            $i0 => value!($t::$x0) $( | $i => value!($t::$x) )*
+        ));
 
-macro_rules! eat_vector_32 (
-    ($i:expr, $submac:ident!( $($args:tt)* )) => (
-        do_parse!($i,
-            n: eat_32 >>
-            xs: count!($submac!($($args)*), n as usize) >>
-            (xs)
-        )
+        impl $t {
+            fn to_debug(&self) -> $d {
+                match *self {
+                    $t::$x0 => $o0 $( , $t::$x => $o )*
+                }
+            }
+        }
     );
-    ($i:expr, $f:expr) => (
-        eat_vector_32!($i, call!($f))
+    ( <$t:ident, $f:ident, $p:ident> ($i0:expr, $x0:ident) $( ($i:expr, $x:ident) )* ) => (
+        #[derive(Debug)]
+        enum $t {
+            $x0 $( , $x )*
+        }
+
+        named!($f<$t>, switch!($p,
+            $i0 => value!($t::$x0) $( | $i => value!($t::$x) )*
+        ));
     );
-);
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MVersion { RoE, AB, SoD }
-
-named!(eat_version<H3MVersion>, switch!(eat_8,
-    0x0E => value!(H3MVersion::RoE, tag!(b"\0\0\0")) |
-    0x15 => value!(H3MVersion::AB, tag!(b"\0\0\0")) |
-    0x1C => value!(H3MVersion::SoD, tag!(b"\0\0\0"))
-));
+h3m_enum! { <H3MVersion, eat_version, eat_32>
+    (0x0000000E, RoE)
+    (0x00000015, AB)
+    (0x0000001C, SoD)
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -91,39 +80,22 @@ named!(eat_string<String>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MSize { S, M, L, XL }
-
-named!(eat_size<H3MSize>, switch!(eat_32,
-    36 => value!(H3MSize::S) |
-    72 => value!(H3MSize::M) |
-    108 => value!(H3MSize::L) |
-    144 => value!(H3MSize::XL)
-));
-
-impl H3MSize {
-    fn tiles(&self) -> usize {
-        match *self {
-            H3MSize::S => 36,
-            H3MSize::M => 72,
-            H3MSize::L => 108,
-            H3MSize::XL => 144,
-        }
-    }
+h3m_enum! { <H3MSize, eat_size, eat_32, usize>
+    (36, S, 36)
+    (72, M, 72)
+    (108, L, 108)
+    (144, XL, 144)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MDifficulty { Easy, Normal, Hard, Expert, Impossible }
-
-named!(eat_difficulty<H3MDifficulty>, switch!(eat_8,
-    0 => value!(H3MDifficulty::Easy) |
-    1 => value!(H3MDifficulty::Normal) |
-    2 => value!(H3MDifficulty::Hard) |
-    3 => value!(H3MDifficulty::Expert) |
-    4 => value!(H3MDifficulty::Impossible)
-));
+h3m_enum! { <H3MDifficulty, eat_difficulty, eat_8>
+    (0, Easy)
+    (1, Normal)
+    (2, Hard)
+    (3, Expert)
+    (4, Impossible)
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -141,10 +113,10 @@ struct H3MHeader {
 
 impl H3MHeader {
     fn get_width(&self) -> usize {
-        self.size.tiles()
+        self.size.to_debug()
     }
     fn get_height(&self) -> usize {
-        self.size.tiles()
+        self.size.to_debug()
     }
 }
 
@@ -171,26 +143,18 @@ named!(eat_header<H3MHeader>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MTownKind {
-    Castle, Rampart, Tower,
-    Inferno, Necropolis, Dungeon,
-    Stronghold, Fortress, Conflux,
-    Random,
+h3m_enum! { <H3MTownKind, eat_town_kind, eat_8>
+    (0x00, Castle)
+    (0x01, Rampart)
+    (0x02, Tower)
+    (0x03, Inferno)
+    (0x04, Necropolis)
+    (0x05, Dungeon)
+    (0x06, Stronghold)
+    (0x07, Fortress)
+    (0x08, Conflux)
+    (0xFF, Random)
 }
-
-named!(eat_town_kind<H3MTownKind>, switch!(eat_8,
-    0x00 => value!(H3MTownKind::Castle) |
-    0x01 => value!(H3MTownKind::Rampart) |
-    0x02 => value!(H3MTownKind::Tower) |
-    0x03 => value!(H3MTownKind::Inferno) |
-    0x04 => value!(H3MTownKind::Necropolis) |
-    0x05 => value!(H3MTownKind::Dungeon) |
-    0x06 => value!(H3MTownKind::Stronghold) |
-    0x07 => value!(H3MTownKind::Fortress) |
-    0x08 => value!(H3MTownKind::Conflux) |
-    0xFF => value!(H3MTownKind::Random)
-));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -222,17 +186,12 @@ named!(eat_main_town<H3MMainTown>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MPlayerBehavior {
-    Random, Warrior, Builder, Explorer,
+h3m_enum! { <H3MPlayerBehavior, eat_player_behavior, eat_8>
+    (0, Random)
+    (1, Warrior)
+    (2, Builder)
+    (3, Explorer)
 }
-
-named!(eat_player_behavior<H3MPlayerBehavior>, switch!(eat_8,
-    0 => value!(H3MPlayerBehavior::Random) |
-    1 => value!(H3MPlayerBehavior::Warrior) |
-    2 => value!(H3MPlayerBehavior::Builder) |
-    3 => value!(H3MPlayerBehavior::Explorer)
-));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -243,46 +202,31 @@ named!(artifact<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i)));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MResource {
-    Wood, Mercury, Ore, Sulfur, Crystals, Gems, Gold,
+h3m_enum! { <H3MResource, eat_resource, eat_8>
+    (0, Wood)
+    (1, Mercury)
+    (2, Ore)
+    (3, Sulfur)
+    (4, Crystals)
+    (5, Gems)
+    (6, Gold)
 }
-
-named!(resource<H3MResource>, switch!(eat_8,
-    0 => value!(H3MResource::Wood) |
-    1 => value!(H3MResource::Mercury) |
-    2 => value!(H3MResource::Ore) |
-    3 => value!(H3MResource::Sulfur) |
-    4 => value!(H3MResource::Crystals) |
-    5 => value!(H3MResource::Gems) |
-    6 => value!(H3MResource::Gold)
-));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MHallLevel {
-    Town, City, Capitol,
+h3m_enum! { <H3MHallLevel, eat_hall_level, eat_8>
+    (0, Town)
+    (1, City)
+    (2, Capitol)
 }
-
-named!(hall_level<H3MHallLevel>, switch!(eat_8,
-    0 => value!(H3MHallLevel::Town) |
-    1 => value!(H3MHallLevel::City) |
-    2 => value!(H3MHallLevel::Capitol)
-));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MCastleLevel {
-    Fort, Citadel, Castle,
+h3m_enum! { <H3MCastleLevel, eat_castle_level, eat_8>
+    (0, Fort)
+    (1, Citadel)
+    (2, Castle)
 }
-
-named!(castle_level<H3MCastleLevel>, switch!(eat_8,
-    0 => value!(H3MCastleLevel::Fort) |
-    1 => value!(H3MCastleLevel::Citadel) |
-    2 => value!(H3MCastleLevel::Castle)
-));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -319,11 +263,11 @@ named!(eat_victory<H3MVictoryCondition>,
                                  cr: creature >> amount: eat_32 >>
                                  (H3MVictoryCondition::AccumCreatures(def, cpu, cr, amount))) |
                0x02 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 res: resource >> amount: eat_32 >>
+                                 res: eat_resource >> amount: eat_32 >>
                                  (H3MVictoryCondition::AccumResources(def, cpu, res, amount))) |
                0x03 => do_parse!(def: eat_flag >> cpu: eat_flag >>
                                  loc: eat_location >>
-                                 hall: hall_level >> castle: castle_level >>
+                                 hall: eat_hall_level >> castle: eat_castle_level >>
                                  (H3MVictoryCondition::UpgradeTown(def, cpu, loc, hall, castle))) |
                0x04 => do_parse!(def: eat_flag >> cpu: eat_flag >>
                                  loc: eat_location >>
@@ -452,7 +396,7 @@ named_args!(eat_player(color: H3MColor)<H3MPlayer>, do_parse!(
         _ => map!(eat_hero, |x| Some(x))
     ) >>
     unknown: eat_8 >>
-    heroes: eat_vector_32!(eat_hero) >>
+    heroes: length_count!(eat_32, eat_hero) >>
     (H3MPlayer {
         color,
         playability,
@@ -497,7 +441,7 @@ struct H3MAvailableHeroes {
 named!(eat_available_heroes<H3MAvailableHeroes>, do_parse!(
     mask: count_fixed!(u8, eat_8, 20) >>
     unknown1: count_fixed!(u8, eat_8, 4) >>
-    settings: eat_vector_8!(eat_hero_availability) >>
+    settings: length_count!(eat_8, eat_hero_availability) >>
     unknown2: count_fixed!(u8, eat_8, 31) >>
     (H3MAvailableHeroes {
         mask, unknown1, settings, unknown2,
@@ -506,27 +450,17 @@ named!(eat_available_heroes<H3MAvailableHeroes>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MSkillLevel {
-    Basic, Advanced, Expert,
+h3m_enum! { <H3MSkillLevel, eat_skill_level, eat_8>
+    (0, Basic)
+    (1, Advanced)
+    (2, Expert)
 }
 
-named!(eat_skill_level<H3MSkillLevel>, switch!(eat_8,
-    0x00 => value!(H3MSkillLevel::Basic) |
-    0x01 => value!(H3MSkillLevel::Advanced) |
-    0x02 => value!(H3MSkillLevel::Expert)
-));
-
-#[derive(Debug)]
-enum H3MHeroGender {
-    Default, Male, Female,
+h3m_enum! { <H3MHeroGender, eat_hero_gender, eat_8>
+    (0x00, Male)
+    (0x01, Female)
+    (0xFF, Default)
 }
-
-named!(eat_hero_gender<H3MHeroGender>, switch!(eat_8,
-    0x00 => value!(H3MHeroGender::Male) |
-    0x01 => value!(H3MHeroGender::Female) |
-    0xFF => value!(H3MHeroGender::Default)
-));
 
 #[derive(Debug)]
 struct H3MHeroEquipment {
@@ -572,7 +506,7 @@ named!(eat_hero_equipment<H3MHeroEquipment>, do_parse!(
     machine4: eat_16 >>
     spellbook: eat_16 >>
     misc5: eat_16 >>
-    backpack: eat_vector_16!(eat_16) >>
+    backpack: length_count!(eat_16, eat_16) >>
     (H3MHeroEquipment {
         head, shoulders, neck,
         rhand, lhand, torso, rring, lring, feet,
@@ -596,7 +530,7 @@ struct H3MHeroCustomization {
 
 named!(eat_hero_customization<H3MHeroCustomization>, do_parse!(
     exp: eat_option!(eat_32) >>
-    skills: eat_option!(eat_vector_32!(tuple!(eat_8, eat_skill_level))) >>
+    skills: eat_option!(length_count!(eat_32, tuple!(eat_8, eat_skill_level))) >>
     equipment: eat_option!(eat_hero_equipment) >>
     bio: eat_option!(eat_string) >>
     gender: eat_hero_gender >>
@@ -609,155 +543,69 @@ named!(eat_hero_customization<H3MHeroCustomization>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
-enum H3MTerrainType {
-    Dirt, Sand, Grass, Snow, Swamp, Rough, Subterranean, Lava, Water, Rock
+h3m_enum! {
+    <H3MTerrainType, eat_terrain_type, eat_8, &str>
+    (0x00, Dirt, ":")
+    (0x01, Sand, "-")
+    (0x02, Grass, "v")
+    (0x03, Snow, "*")
+    (0x04, Swamp, ".")
+    (0x05, Rough, "#")
+    (0x06, Subterranean, "_")
+    (0x07, Lava, "x")
+    (0x08, Water, "~")
+    (0x09, Rock, "^")
 }
 
-named!(eat_terrain_type<H3MTerrainType>,
-       switch!(eat_8,
-               0x00 => value!(H3MTerrainType::Dirt) |
-               0x01 => value!(H3MTerrainType::Sand) |
-               0x02 => value!(H3MTerrainType::Grass) |
-               0x03 => value!(H3MTerrainType::Snow) |
-               0x04 => value!(H3MTerrainType::Swamp) |
-               0x05 => value!(H3MTerrainType::Rough) |
-               0x06 => value!(H3MTerrainType::Subterranean) |
-               0x07 => value!(H3MTerrainType::Lava) |
-               0x08 => value!(H3MTerrainType::Water) |
-               0x09 => value!(H3MTerrainType::Rock)
-       )
-);
-
-impl H3MTerrainType {
-    fn to_symbol(&self) -> u8 {
-        match *self {
-            H3MTerrainType::Dirt => b':',
-            H3MTerrainType::Sand => b'_',
-            H3MTerrainType::Grass => b'v',
-            H3MTerrainType::Snow => b'*',
-            H3MTerrainType::Swamp => b'.',
-            H3MTerrainType::Rough => b'#',
-            H3MTerrainType::Subterranean => b'%',
-            H3MTerrainType::Lava => b'x',
-            H3MTerrainType::Water => b'~',
-            H3MTerrainType::Rock => b'^',
-        }
-    }
+h3m_enum! { <H3MRiverType, eat_river_type, eat_8>
+    (0x00, None)
+    (0x01, Clear)
+    (0x02, Icy)
+    (0x03, Muddy)
+    (0x04, Lava)
 }
 
-#[derive(Debug)]
-enum H3MRiverType {
-    None, Clear, Icy, Muddy, Lava
+h3m_enum! { <H3MRiverTopology, eat_river_topo, eat_8>
+    (0x00, Turn1)
+    (0x01, Turn2)
+    (0x02, Turn3)
+    (0x03, Turn4)
+    (0x04, Cross)
+    (0x05, TVert1)
+    (0x06, TVert2)
+    (0x07, THorz1)
+    (0x08, THorz2)
+    (0x09, Vert1)
+    (0x0A, Vert2)
+    (0x0B, Horz1)
+    (0x0C, Horz2)
 }
 
-named!(eat_river_type<H3MRiverType>,
-       switch!(eat_8,
-               0x00 => value!(H3MRiverType::None) |
-               0x01 => value!(H3MRiverType::Clear) |
-               0x02 => value!(H3MRiverType::Icy) |
-               0x03 => value!(H3MRiverType::Muddy) |
-               0x04 => value!(H3MRiverType::Lava)
-       )
-);
-
-#[derive(Debug)]
-enum H3MRiverTopology {
-    Turn1, Turn2, Turn3, Turn4,
-    Cross,
-    TVert1, TVert2,
-    THorz1, THorz2,
-    Vert1, Vert2,
-    Horz1, Horz2
+h3m_enum! { <H3MRoadType, eat_road_type, eat_8>
+    (0x00, None)
+    (0x01, Dirt)
+    (0x02, Gravel)
+    (0x03, Cobblestone)
 }
 
-named!(eat_river_topo<H3MRiverTopology>,
-       switch!(eat_8,
-               0x00 => value!(H3MRiverTopology::Turn1) |
-               0x01 => value!(H3MRiverTopology::Turn2) |
-               0x02 => value!(H3MRiverTopology::Turn3) |
-               0x03 => value!(H3MRiverTopology::Turn4) |
-               0x04 => value!(H3MRiverTopology::Cross) |
-               0x05 => value!(H3MRiverTopology::TVert1) |
-               0x06 => value!(H3MRiverTopology::TVert2) |
-               0x07 => value!(H3MRiverTopology::THorz1) |
-               0x08 => value!(H3MRiverTopology::THorz2) |
-               0x09 => value!(H3MRiverTopology::Vert1) |
-               0x0A => value!(H3MRiverTopology::Vert2) |
-               0x0B => value!(H3MRiverTopology::Horz1) |
-               0x0C => value!(H3MRiverTopology::Horz2)
-       )
-);
-
-#[derive(Debug)]
-enum H3MRoadType {
-    None, Dirt, Gravel, Cobblestone
-}
-
-named!(eat_road_type<H3MRoadType>,
-       switch!(eat_8,
-               0x00 => value!(H3MRoadType::None) |
-               0x01 => value!(H3MRoadType::Dirt) |
-               0x02 => value!(H3MRoadType::Gravel) |
-               0x03 => value!(H3MRoadType::Cobblestone)
-       )
-);
-
-#[derive(Debug)]
-enum H3MRoadTopology {
-    Turn1, Turn2, Turn3, Turn4, Turn5, Turn6,
-    TVert1, TVert2,
-    THorz1, THorz2,
-    Vert1, Vert2,
-    Horz1, Horz2,
-    EndVert, EndHorz,
-    Cross
-}
-
-named!(eat_road_topo<H3MRoadTopology>,
-       switch!(eat_8,
-               0x00 => value!(H3MRoadTopology::Turn1) |
-               0x01 => value!(H3MRoadTopology::Turn2) |
-               0x02 => value!(H3MRoadTopology::Turn3) |
-               0x03 => value!(H3MRoadTopology::Turn4) |
-               0x04 => value!(H3MRoadTopology::Turn5) |
-               0x05 => value!(H3MRoadTopology::Turn6) |
-               0x06 => value!(H3MRoadTopology::TVert1) |
-               0x07 => value!(H3MRoadTopology::TVert2) |
-               0x08 => value!(H3MRoadTopology::THorz1) |
-               0x09 => value!(H3MRoadTopology::THorz2) |
-               0x0A => value!(H3MRoadTopology::Vert1) |
-               0x0B => value!(H3MRoadTopology::Vert2) |
-               0x0C => value!(H3MRoadTopology::Horz1) |
-               0x0D => value!(H3MRoadTopology::Horz2) |
-               0x0E => value!(H3MRoadTopology::EndVert) |
-               0x0F => value!(H3MRoadTopology::EndHorz) |
-               0x10 => value!(H3MRoadTopology::Cross)
-       )
-);
-
-impl H3MRoadTopology {
-    fn to_symbol(&self) -> u8 {
-        match *self {
-            H3MRoadTopology::Turn1 => b'1',
-            H3MRoadTopology::Turn2 => b'2',
-            H3MRoadTopology::Turn3 => b'3',
-            H3MRoadTopology::Turn4 => b'4',
-            H3MRoadTopology::Turn5 => b'5',
-            H3MRoadTopology::Turn6 => b'6',
-            H3MRoadTopology::TVert1 => b'>',
-            H3MRoadTopology::TVert2 => b'<',
-            H3MRoadTopology::THorz1 => b'^',
-            H3MRoadTopology::THorz2 => b'v',
-            H3MRoadTopology::Vert1 => b'I',
-            H3MRoadTopology::Vert2 => b'|',
-            H3MRoadTopology::Horz1 => b'-',
-            H3MRoadTopology::Horz2 => b'~',
-            H3MRoadTopology::EndVert => b'*',
-            H3MRoadTopology::EndHorz => b'o',
-            H3MRoadTopology::Cross => b'+',
-        }
-    }
+h3m_enum! { <H3MRoadTopology, eat_road_topo, eat_8, &str>
+    (0x00, Turn1, "1")
+    (0x01, Turn2, "2")
+    (0x02, Turn3, "3")
+    (0x03, Turn4, "4")
+    (0x04, Turn5, "5")
+    (0x05, Turn6, "6")
+    (0x06, TVert1, ">")
+    (0x07, TVert2, "<")
+    (0x08, THorz1, "^")
+    (0x09, THorz2, "v")
+    (0x0A, Vert1, "I")
+    (0x0B, Vert2, "|")
+    (0x0C, Horz1, "-")
+    (0x0D, Horz2, "~")
+    (0x0E, EndVert, "*")
+    (0x0F, EndHorz, "o")
+    (0x10, Cross, "+")
 }
 
 #[derive(Debug)]
@@ -803,10 +651,8 @@ struct H3MFile {
     rumors: Vec<(String, String)>,
     heroes: Vec<Option<H3MHeroCustomization>>, // TODO: this always has 156 items
     land: Vec<H3MTile>,
-/*
-    underground: Option<Vec<H3MTile>>,
-    objects: Vec<H3MObject>,
-*/
+    //underground: Option<Vec<H3MTile>>,
+    //objects: Vec<H3MObject>,
 }
 
 named!(eat_h3m<H3MFile>, do_parse!(
@@ -829,15 +675,15 @@ named!(eat_h3m<H3MFile>, do_parse!(
     artifacts: count_fixed!(u8, eat_8, 18) >>
     spells: count_fixed!(u8, eat_8, 9) >>
     skills: count_fixed!(u8, eat_8, 4) >>
-    rumors: eat_vector_32!(tuple!(eat_string, eat_string)) >>
+    rumors: length_count!(eat_32, tuple!(eat_string, eat_string)) >>
     heroes: count!(eat_option!(eat_hero_customization), 156) >>
     land: count!(eat_tile, header.get_width() * header.get_height()) >>
 /*
-        underground: switch!(value!(header.has_underground),
+    underground: switch!(value!(header.has_underground),
         false => value!(None) |
         true => map!(count!(eat_tile, header.get_width() * header.get_height()))
     ) >>
-    objects: eat_vector_32!(eat_object) >>
+    objects: length_count!(eat_32, eat_object) >>
 */
     (H3MFile {
         header,
@@ -883,7 +729,7 @@ fn main() {
                     let mut terrain = String::new();
                     for r in 0..h {
                         for c in 0..w {
-                            terrain.push(doc.land[r * w + c].terrain.to_symbol() as char);
+                            terrain.push_str(doc.land[r * w + c].terrain.to_debug());
                         }
                         terrain.push('\n');
                     }
@@ -895,7 +741,7 @@ fn main() {
                             if let H3MRoadType::None = tile.road_type {
                                 terrain.push('.');
                             } else {
-                                terrain.push(tile.road_topo.to_symbol() as char);
+                                terrain.push_str(tile.road_topo.to_debug());
                             }
                         }
                         terrain.push('\n');

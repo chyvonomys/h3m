@@ -545,24 +545,24 @@ named!(eat_hero_customization<H3MHeroCustomization>, do_parse!(
 
 h3m_enum! {
     <H3MTerrainType, eat_terrain_type, eat_8, &str>
-    (0x00, Dirt, ":")
-    (0x01, Sand, "-")
-    (0x02, Grass, "v")
-    (0x03, Snow, "*")
-    (0x04, Swamp, ".")
-    (0x05, Rough, "#")
-    (0x06, Subterranean, "_")
-    (0x07, Lava, "x")
-    (0x08, Water, "~")
-    (0x09, Rock, "^")
+    (0x00, TrDirt, ":")
+    (0x01, TrSand, "-")
+    (0x02, TrGrass, "v")
+    (0x03, TrSnow, "*")
+    (0x04, TrSwamp, ".")
+    (0x05, TrRough, "#")
+    (0x06, TrSubterranean, "_")
+    (0x07, TrLava, "x")
+    (0x08, TrWater, "~")
+    (0x09, TrRock, "^")
 }
 
 h3m_enum! { <H3MRiverType, eat_river_type, eat_8>
-    (0x00, None)
-    (0x01, Clear)
-    (0x02, Icy)
-    (0x03, Muddy)
-    (0x04, Lava)
+    (0x00, RvNone)
+    (0x01, RvClear)
+    (0x02, RvIcy)
+    (0x03, RvMuddy)
+    (0x04, RvLava)
 }
 
 h3m_enum! { <H3MRiverTopology, eat_river_topo, eat_8>
@@ -582,10 +582,10 @@ h3m_enum! { <H3MRiverTopology, eat_river_topo, eat_8>
 }
 
 h3m_enum! { <H3MRoadType, eat_road_type, eat_8>
-    (0x00, None)
-    (0x01, Dirt)
-    (0x02, Gravel)
-    (0x03, Cobblestone)
+    (0x00, RdNone)
+    (0x01, RdDirt)
+    (0x02, RdGravel)
+    (0x03, RdCobblestone)
 }
 
 h3m_enum! { <H3MRoadTopology, eat_road_topo, eat_8, &str>
@@ -608,15 +608,41 @@ h3m_enum! { <H3MRoadTopology, eat_road_topo, eat_8, &str>
     (0x10, Cross, "+")
 }
 
-#[derive(Debug)]
 struct H3MTile {
     terrain: H3MTerrainType,
     texture: u8,
+    flip_terrain_x: bool,
+    flip_terrain_y: bool,
     river_type: H3MRiverType,
     river_topo: H3MRiverTopology,
+    flip_river_x: bool,
+    flip_river_y: bool,
     road_type: H3MRoadType,
     road_topo: H3MRoadTopology,
-    mirror: u8,
+    flip_road_x: bool,
+    flip_road_y: bool,
+}
+
+impl std::fmt::Debug for H3MTile {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<{:?}:{:?}{}{}{}{}>",
+               self.terrain, self.texture,
+               if self.flip_terrain_x { "-" } else { "" },
+               if self.flip_terrain_y { "|" } else { "" },
+               if let H3MRiverType::RvNone = self.river_type { "".to_owned() } else {
+                   format!(" {:?}:{:?}{}{}", self.river_type, self.river_topo,
+                           if self.flip_river_x { "-" } else { "" },
+                           if self.flip_river_y { "|" } else { "" },
+                   )
+               },
+               if let H3MRoadType::RdNone = self.road_type { "".to_owned() } else {
+                   format!(" {:?}:{:?}{}{}", self.road_type, self.road_topo,
+                           if self.flip_road_x { "-" } else { "" },
+                           if self.flip_road_y { "|" } else { "" },
+                   )
+               },
+        )
+    }
 }
 
 named!(eat_tile<H3MTile>, do_parse!(
@@ -631,7 +657,12 @@ named!(eat_tile<H3MTile>, do_parse!(
         terrain, texture,
         river_type, river_topo,
         road_type, road_topo,
-        mirror
+        flip_terrain_y: mirror & 1 == 1,
+        flip_terrain_x: mirror & 2 == 2,
+        flip_river_y: mirror & 4 == 4,
+        flip_river_x: mirror & 8 == 8,
+        flip_road_y: mirror & 16 == 16,
+        flip_road_x: mirror & 32 == 32 
     })
 ));
 
@@ -738,7 +769,7 @@ fn main() {
                     for r in 0..h {
                         for c in 0..w {
                             let tile = &doc.land[r * w + c];
-                            if let H3MRoadType::None = tile.road_type {
+                            if let H3MRoadType::RdNone = tile.road_type {
                                 terrain.push('.');
                             } else {
                                 terrain.push_str(tile.road_topo.to_debug());

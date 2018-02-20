@@ -102,7 +102,7 @@ h3m_enum! { <H3MDifficulty, eat_difficulty, eat_8>
 #[derive(Debug)]
 struct H3MHeader {
     version: H3MVersion,
-    unknown: u8,
+    has_players: bool,
     size: H3MSize,
     has_underground: bool,
     name: String,
@@ -122,7 +122,7 @@ impl H3MHeader {
 
 named!(eat_header<H3MHeader>, do_parse!(
     version: eat_version >>
-    unknown: eat_8 >>
+    has_players: eat_flag >>
     size: eat_size >>
     has_underground: eat_flag >>
     name: eat_string >>
@@ -131,7 +131,7 @@ named!(eat_header<H3MHeader>, do_parse!(
     level_cap: eat_8 >>
     (H3MHeader {
         version,
-        unknown,
+        has_players,
         size,
         has_underground,
         name,
@@ -363,24 +363,18 @@ named!(eat_player_allowed_alignments<H3MPlayerAllowedAlignments>, do_parse!(
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-enum H3MColor {
-    Red, Blue, Tan, Green, Orange, Purple, Teal, Pink,
-}
-
-#[derive(Debug)]
 struct H3MPlayer {
-    color: H3MColor, // convenience
     playability: H3MPlayerPlayability,
     allowed_alignments: H3MPlayerAllowedAlignments,
     main_town: Option<H3MMainTown>,
     random_hero: bool,
     hero_type: u8,
     main_hero: Option<H3MHero>,
-    unknown: u8, // TODO: check if this is related to `placeholders`
+    num_placeholders: u8,
     heroes: Vec<H3MHero>,
 }
 
-named_args!(eat_player(color: H3MColor)<H3MPlayer>, do_parse!(
+named!(eat_player<H3MPlayer>, do_parse!(
     playability: eat_player_playability >>
     allowed_alignments: switch!(value!(playability.human || playability.computer),
         true => call!(eat_player_allowed_alignments) |
@@ -395,17 +389,16 @@ named_args!(eat_player(color: H3MColor)<H3MPlayer>, do_parse!(
         0xFFu8 => value!(None) |
         _ => map!(eat_hero, |x| Some(x))
     ) >>
-    unknown: eat_8 >>
+    num_placeholders: eat_8 >>
     heroes: length_count!(eat_32, eat_hero) >>
     (H3MPlayer {
-        color,
         playability,
         allowed_alignments,
         main_town,
         random_hero,
         hero_type,
         main_hero,
-        unknown,
+        num_placeholders,
         heroes,
     })
 ));
@@ -433,18 +426,15 @@ named!(eat_hero_availability<H3MHeroAvailability>, do_parse!(
 #[derive(Debug)]
 struct H3MAvailableHeroes {
     mask: [u8; 20],
-    unknown1: [u8; 4],
     settings: Vec<H3MHeroAvailability>,
-    unknown2: [u8; 31],
 }
 
 named!(eat_available_heroes<H3MAvailableHeroes>, do_parse!(
     mask: count_fixed!(u8, eat_8, 20) >>
-    unknown1: count_fixed!(u8, eat_8, 4) >>
+    zeroes: tag!(&[0u8; 4]) >>
     settings: length_count!(eat_8, eat_hero_availability) >>
-    unknown2: count_fixed!(u8, eat_8, 31) >>
     (H3MAvailableHeroes {
-        mask, unknown1, settings, unknown2,
+        mask, settings,
     })
 ));
 
@@ -666,6 +656,16 @@ named!(eat_tile<H3MTile>, do_parse!(
     })
 ));
 
+struct H3MMap {
+    tiles: Vec<H3MTile>,
+}
+
+impl std::fmt::Debug for H3MMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<{} tiles>", self.tiles.len())
+    }
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -681,21 +681,15 @@ struct H3MFile {
     skills: [u8; 4],
     rumors: Vec<(String, String)>,
     heroes: Vec<Option<H3MHeroCustomization>>, // TODO: this always has 156 items
-    land: Vec<H3MTile>,
-    //underground: Option<Vec<H3MTile>>,
+    land: H3MMap,
+    underground: Option<H3MMap>,
     //objects: Vec<H3MObject>,
 }
 
 named!(eat_h3m<H3MFile>, do_parse!(
     header: eat_header >>
-    p0: call!(eat_player, H3MColor::Red) >>
-    p1: call!(eat_player, H3MColor::Blue) >>
-    p2: call!(eat_player, H3MColor::Tan) >>
-    p3: call!(eat_player, H3MColor::Green) >>
-    p4: call!(eat_player, H3MColor::Orange) >>
-    p5: call!(eat_player, H3MColor::Purple) >>
-    p6: call!(eat_player, H3MColor::Teal) >>
-    p7: call!(eat_player, H3MColor::Pink) >>
+    p0: eat_player >> p1: eat_player >> p2: eat_player >> p3: eat_player >>
+    p4: eat_player >> p5: eat_player >> p6: eat_player >> p7: eat_player >>
     victory: eat_victory >>
     loss: eat_loss >>
     teams: switch!(eat_8,
@@ -703,25 +697,26 @@ named!(eat_h3m<H3MFile>, do_parse!(
         _ => map!(count_fixed!(u8, eat_8, 8), |x| Some(x))
     ) >>
     available_heroes: eat_available_heroes >>
+    zeroes: tag!(&[0u8; 31]) >>
     artifacts: count_fixed!(u8, eat_8, 18) >>
     spells: count_fixed!(u8, eat_8, 9) >>
     skills: count_fixed!(u8, eat_8, 4) >>
     rumors: length_count!(eat_32, tuple!(eat_string, eat_string)) >>
     heroes: count!(eat_option!(eat_hero_customization), 156) >>
     land: count!(eat_tile, header.get_width() * header.get_height()) >>
-/*
     underground: switch!(value!(header.has_underground),
         false => value!(None) |
-        true => map!(count!(eat_tile, header.get_width() * header.get_height()))
+        true => map!(count!(eat_tile, header.get_width() * header.get_height()), |x| Some(x))
     ) >>
-    objects: length_count!(eat_32, eat_object) >>
-*/
+    //objects: length_count!(eat_32, eat_object) >>
     (H3MFile {
         header,
         players: [p0, p1, p2, p3, p4, p5, p6, p7],
         victory, loss, teams, available_heroes,
         artifacts, spells, skills, rumors, heroes,
-        land, //underground, objects,
+        land: H3MMap { tiles: land },
+        underground: underground.map(|tiles| H3MMap { tiles }),
+        //objects,
     })
 ));
 
@@ -760,7 +755,7 @@ fn main() {
                     let mut terrain = String::new();
                     for r in 0..h {
                         for c in 0..w {
-                            terrain.push_str(doc.land[r * w + c].terrain.to_debug());
+                            terrain.push_str(doc.land.tiles[r * w + c].terrain.to_debug());
                         }
                         terrain.push('\n');
                     }
@@ -768,7 +763,7 @@ fn main() {
                     terrain.clear();
                     for r in 0..h {
                         for c in 0..w {
-                            let tile = &doc.land[r * w + c];
+                            let tile = &doc.land.tiles[r * w + c];
                             if let H3MRoadType::RdNone = tile.road_type {
                                 terrain.push('.');
                             } else {

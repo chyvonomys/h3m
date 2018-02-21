@@ -240,58 +240,56 @@ named!(creature<H3MCreature>, map!(eat_16, |i| H3MCreature(i)));
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-enum H3MVictoryCondition {
-    None,
-    AcquireArtifact(bool, bool, H3MArtifact),
-    AccumCreatures(bool, bool, H3MCreature, u32),
-    AccumResources(bool, bool, H3MResource, u32),
-    UpgradeTown(bool, bool, H3MLocation, H3MHallLevel, H3MCastleLevel),
-    BuildGrail(bool, bool, H3MLocation),
-    DefeatHero(bool, bool, H3MLocation),
-    CaptureTown(bool, bool, H3MLocation),
-    DefeatMoster(bool, bool, H3MLocation),
-    FlagAllDwellings(bool, bool),
-    FlagAllMines(bool, bool),
-    TransportArtifact(bool, bool, H3MArtifact, H3MLocation),
+struct H3MSpecialVictoryCondition {
+    condition: H3MVictoryCondition,
+    or_default: bool,
+    cpu_allowed: bool,
 }
 
-named!(eat_victory<H3MVictoryCondition>,
-       switch!(eat_8,
-               0xFF => value!(H3MVictoryCondition::None) |
-               0x00 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 art: artifact >>
-                                 (H3MVictoryCondition::AcquireArtifact(def, cpu, art))) |
-               0x01 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 cr: creature >> amount: eat_32 >>
-                                 (H3MVictoryCondition::AccumCreatures(def, cpu, cr, amount))) |
-               0x02 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 res: eat_resource >> amount: eat_32 >>
-                                 (H3MVictoryCondition::AccumResources(def, cpu, res, amount))) |
-               0x03 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 loc: eat_location >>
-                                 hall: eat_hall_level >> castle: eat_castle_level >>
-                                 (H3MVictoryCondition::UpgradeTown(def, cpu, loc, hall, castle))) |
-               0x04 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 loc: eat_location >>
-                                 (H3MVictoryCondition::BuildGrail(def, cpu, loc))) |
-               0x05 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 loc: eat_location >>
-                                 (H3MVictoryCondition::DefeatHero(def, cpu, loc))) |
-               0x06 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 loc: eat_location >>
-                                 (H3MVictoryCondition::CaptureTown(def, cpu, loc))) |
-               0x07 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 loc: eat_location >>
-                                 (H3MVictoryCondition::DefeatMoster(def, cpu, loc))) |
-               0x08 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 (H3MVictoryCondition::FlagAllDwellings(def, cpu))) |
-               0x09 => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 (H3MVictoryCondition::FlagAllMines(def, cpu))) |
-               0x0A => do_parse!(def: eat_flag >> cpu: eat_flag >>
-                                 art: artifact >> loc: eat_location >>
-                                 (H3MVictoryCondition::TransportArtifact(def, cpu, art, loc)))
+named!(eat_special_victory<Option<H3MSpecialVictoryCondition>>,
+       switch!(peek!(eat_8),
+               0xFF => value!(None, eat_8) |
+               _ => do_parse!(
+                       code: eat_8 >>
+                       or_default: eat_flag >>
+                       cpu_allowed: eat_flag >>
+                       condition: call!(eat_victory, code) >>
+                       (Some(H3MSpecialVictoryCondition {
+                           condition, or_default, cpu_allowed
+                       }))
+               )
        )
 );
+
+#[derive(Debug)]
+enum H3MVictoryCondition {
+    AcquireArtifact(H3MArtifact),
+    AccumCreatures(H3MCreature, u32),
+    AccumResources(H3MResource, u32),
+    UpgradeTown(H3MLocation, H3MHallLevel, H3MCastleLevel),
+    BuildGrail(H3MLocation),
+    DefeatHero(H3MLocation),
+    CaptureTown(H3MLocation),
+    DefeatMoster(H3MLocation),
+    FlagAllDwellings,
+    FlagAllMines,
+    TransportArtifact(H3MArtifact, H3MLocation),
+}
+
+named_args!(eat_victory(code: u8)<H3MVictoryCondition>, switch!(value!(code),
+    0x00 => do_parse!(art: artifact >> (H3MVictoryCondition::AcquireArtifact(art))) |
+    0x01 => do_parse!(cr: creature >> amount: eat_32 >> (H3MVictoryCondition::AccumCreatures(cr, amount))) |
+    0x02 => do_parse!(res: eat_resource >> amount: eat_32 >> (H3MVictoryCondition::AccumResources(res, amount))) |
+    0x03 => do_parse!(loc: eat_location >> hall: eat_hall_level >> castle: eat_castle_level >>
+                      (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
+    0x04 => do_parse!(loc: eat_location >> (H3MVictoryCondition::BuildGrail(loc))) |
+    0x05 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatHero(loc))) |
+    0x06 => do_parse!(loc: eat_location >> (H3MVictoryCondition::CaptureTown(loc))) |
+    0x07 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatMoster(loc))) |
+    0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
+    0x09 => value!(H3MVictoryCondition::FlagAllMines) |
+    0x0A => do_parse!(art: artifact >> loc: eat_location >> (H3MVictoryCondition::TransportArtifact(art, loc)))
+));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -674,7 +672,7 @@ impl std::fmt::Debug for H3MMap {
 struct H3MFile {
     header: H3MHeader,
     players: [H3MPlayer; 8],
-    victory: H3MVictoryCondition,
+    victory: Option<H3MSpecialVictoryCondition>,
     loss: H3MLossCondition,
     teams: Option<[u8; 8]>,
     available_heroes: H3MAvailableHeroes,
@@ -692,7 +690,7 @@ named!(eat_h3m<H3MFile>, do_parse!(
     header: eat_header >>
     p0: eat_player >> p1: eat_player >> p2: eat_player >> p3: eat_player >>
     p4: eat_player >> p5: eat_player >> p6: eat_player >> p7: eat_player >>
-    victory: eat_victory >>
+    victory: eat_special_victory >>
     loss: eat_loss >>
     teams: switch!(eat_8,
         0u8 => value!(None) |

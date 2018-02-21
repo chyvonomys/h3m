@@ -1,4 +1,6 @@
 extern crate flate2;
+extern crate colored;
+use colored::Colorize;
 
 #[macro_use]
 extern crate nom;
@@ -534,17 +536,17 @@ named!(eat_hero_customization<H3MHeroCustomization>, do_parse!(
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 h3m_enum! {
-    <H3MTerrainType, eat_terrain_type, eat_8, &str>
-    (0x00, TrDirt, ":")
-    (0x01, TrSand, "-")
-    (0x02, TrGrass, "v")
-    (0x03, TrSnow, "*")
-    (0x04, TrSwamp, ".")
-    (0x05, TrRough, "#")
-    (0x06, TrSubterranean, "_")
-    (0x07, TrLava, "x")
-    (0x08, TrWater, "~")
-    (0x09, TrRock, "^")
+    <H3MTerrainType, eat_terrain_type, eat_8, colored::Color>
+    (0x00, TrDirt, colored::Color::Yellow)
+    (0x01, TrSand, colored::Color::BrightYellow)
+    (0x02, TrGrass, colored::Color::Green)
+    (0x03, TrSnow, colored::Color::BrightWhite)
+    (0x04, TrSwamp, colored::Color::Cyan)
+    (0x05, TrRough, colored::Color::Magenta)
+    (0x06, TrSubterranean, colored::Color::BrightBlack)
+    (0x07, TrLava, colored::Color::Red)
+    (0x08, TrWater, colored::Color::Blue)
+    (0x09, TrRock, colored::Color::Black)
 }
 
 h3m_enum! { <H3MRiverType, eat_river_type, eat_8>
@@ -578,24 +580,24 @@ h3m_enum! { <H3MRoadType, eat_road_type, eat_8>
     (0x03, RdCobblestone)
 }
 
-h3m_enum! { <H3MRoadTopology, eat_road_topo, eat_8, &str>
-    (0x00, Turn1, "1")
-    (0x01, Turn2, "2")
-    (0x02, Turn3, "3")
-    (0x03, Turn4, "4")
-    (0x04, Turn5, "5")
-    (0x05, Turn6, "6")
-    (0x06, TVert1, ">")
-    (0x07, TVert2, "<")
-    (0x08, THorz1, "^")
-    (0x09, THorz2, "v")
-    (0x0A, Vert1, "I")
-    (0x0B, Vert2, "|")
-    (0x0C, Horz1, "-")
-    (0x0D, Horz2, "~")
-    (0x0E, EndVert, "*")
-    (0x0F, EndHorz, "o")
-    (0x10, Cross, "+")
+h3m_enum! { <H3MRoadTopology, eat_road_topo, eat_8, &[u8]>
+    (0x00, Turn1,   b".   oo o ")
+    (0x01, Turn2,   b".   ** * ")
+    (0x02, Turn3,   b".. . o o ")
+    (0x03, Turn4,   b".. . o o ")
+    (0x04, Turn5,   b".. . o o ")
+    (0x05, Turn6,   b".. . o o ")
+    (0x06, TVert1,  b" o  oo o ")
+    (0x07, TVert2,  b" *  ** * ")
+    (0x08, THorz1,  b"   ooo o ")
+    (0x09, THorz2,  b"   *** * ")
+    (0x0A, Vert1,   b" o  o  o ")
+    (0x0B, Vert2,   b" *  *  * ")
+    (0x0C, Horz1,   b"   ooo   ")
+    (0x0D, Horz2,   b"   ***   ")
+    (0x0E, EndVert, b". . o  o ")
+    (0x0F, EndHorz, b".   oo.  ")
+    (0x10, Cross,   b" o ooo o ")
 }
 
 struct H3MTile {
@@ -750,29 +752,36 @@ fn main() {
             match eat_h3m(&bin) {
                 nom::IResult::Done(_, doc) => {
                     println!("parsed document: {:#?}", doc);
+
                     let w = doc.header.get_width();
                     let h = doc.header.get_height();
-                    let mut terrain = String::new();
+
+                    let mut line = String::new();
                     for r in 0..h {
-                        for c in 0..w {
-                            terrain.push_str(doc.land.tiles[r * w + c].terrain.to_debug());
-                        }
-                        terrain.push('\n');
-                    }
-                    println!("terrain:\n{}\n", terrain);
-                    terrain.clear();
-                    for r in 0..h {
-                        for c in 0..w {
-                            let tile = &doc.land.tiles[r * w + c];
-                            if let H3MRoadType::RdNone = tile.road_type {
-                                terrain.push('.');
-                            } else {
-                                terrain.push_str(tile.road_topo.to_debug());
+                        for sub in 0..3 {
+                            for c in 0..w {
+                                line.clear();
+                                let tile = &doc.land.tiles[r * w + c];
+                                if let H3MRoadType::RdNone = tile.road_type {
+                                    line.push_str("...");
+                                } else {
+                                    let pat = tile.road_topo.to_debug();
+                                    let base = 3 * if tile.flip_road_x { [2, 1, 0] } else { [0, 1, 2] } [sub];
+                                    if tile.flip_road_y {
+                                        line.push(pat[base + 2] as char);
+                                        line.push(pat[base + 1] as char);
+                                        line.push(pat[base + 0] as char);
+                                    } else {
+                                        line.push(pat[base + 0] as char);
+                                        line.push(pat[base + 1] as char);
+                                        line.push(pat[base + 2] as char);
+                                    }
+                                }
+                                print!("{}", line.color(tile.terrain.to_debug()))
                             }
+                            println!();
                         }
-                        terrain.push('\n');
                     }
-                    println!("road_topo:\n{}\n", terrain);
                 }
                 nom::IResult::Error(e) => println!("error: {:#?}", e),
                 nom::IResult::Incomplete(n) => println!("need: {:#?}", n),

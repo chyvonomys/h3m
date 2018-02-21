@@ -6,3 +6,4 @@ authors = ["Andriy S. on cobalt <sima.rv@gmail.com>"]
 [dependencies]
 nom = "3.2.1"
 flate2 = "1.0.1"
+colored = "*"

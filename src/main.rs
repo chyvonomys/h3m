@@ -666,6 +666,36 @@ impl std::fmt::Debug for H3MMap {
     }
 }
 
+#[derive(Debug)]
+struct H3MObject {
+    filename: String,
+    shape_mask: [u8; 6],
+    visit_mask: [u8; 6],
+    terrain_type_mask1: u16,
+    terrain_type_mask2: u16,
+    class: u32,
+    number: u32,
+    group: u8,
+    is_overlay: bool,
+}
+
+named!(eat_object<H3MObject>, do_parse!(
+    filename: eat_string >>
+    shape_mask: count_fixed!(u8, eat_8, 6) >>
+    visit_mask: count_fixed!(u8, eat_8, 6) >>
+    terrain_type_mask1: eat_16 >>
+    terrain_type_mask2: eat_16 >>
+    class: eat_32 >>
+    number: eat_32 >>
+    group: eat_8 >>
+    is_overlay: eat_flag >>
+    zeroes: tag!(&[0u8; 16]) >>
+    (H3MObject {
+        filename, shape_mask, visit_mask, terrain_type_mask1, terrain_type_mask2,
+        class, number, group, is_overlay,
+    })
+));
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -683,7 +713,7 @@ struct H3MFile {
     heroes: Vec<Option<H3MHeroCustomization>>, // TODO: this always has 156 items
     land: H3MMap,
     underground: Option<H3MMap>,
-    //objects: Vec<H3MObject>,
+    objects: Vec<H3MObject>,
 }
 
 named!(eat_h3m<H3MFile>, do_parse!(
@@ -708,7 +738,7 @@ named!(eat_h3m<H3MFile>, do_parse!(
         false => value!(None) |
         true => map!(count!(eat_tile, header.get_width() * header.get_height()), |x| Some(x))
     ) >>
-    //objects: length_count!(eat_32, eat_object) >>
+    objects: length_count!(eat_32, eat_object) >>
     (H3MFile {
         header,
         players: [p0, p1, p2, p3, p4, p5, p6, p7],
@@ -716,7 +746,7 @@ named!(eat_h3m<H3MFile>, do_parse!(
         artifacts, spells, skills, rumors, heroes,
         land: H3MMap { tiles: land },
         underground: underground.map(|tiles| H3MMap { tiles }),
-        //objects,
+        objects,
     })
 ));
 
@@ -748,7 +778,7 @@ fn main() {
             println!("\n{}", dump);
 
             match eat_h3m(&bin) {
-                nom::IResult::Done(_, doc) => {
+                nom::IResult::Done(rem, doc) => {
                     println!("parsed document: {:#?}", doc);
 
                     let w = doc.header.get_width();
@@ -780,6 +810,7 @@ fn main() {
                             println!();
                         }
                     }
+                    println!("remaining: {:?}", rem.len());
                 }
                 nom::IResult::Error(e) => println!("error: {:#?}", e),
                 nom::IResult::Incomplete(n) => println!("need: {:#?}", n),

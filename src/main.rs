@@ -235,7 +235,7 @@ h3m_enum! { <H3MCastleLevel, eat_castle_level, eat_8>
 #[derive(Debug)]
 struct H3MCreature(u16);
 
-named!(creature<H3MCreature>, map!(eat_16, |i| H3MCreature(i)));
+named!(eat_creature<H3MCreature>, map!(eat_16, |i| H3MCreature(i)));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -278,7 +278,7 @@ enum H3MVictoryCondition {
 
 named_args!(eat_victory(code: u8)<H3MVictoryCondition>, switch!(value!(code),
     0x00 => do_parse!(art: artifact >> (H3MVictoryCondition::AcquireArtifact(art))) |
-    0x01 => do_parse!(cr: creature >> amount: eat_32 >> (H3MVictoryCondition::AccumCreatures(cr, amount))) |
+    0x01 => do_parse!(cr: eat_creature >> amount: eat_32 >> (H3MVictoryCondition::AccumCreatures(cr, amount))) |
     0x02 => do_parse!(res: eat_resource >> amount: eat_32 >> (H3MVictoryCondition::AccumResources(res, amount))) |
     0x03 => do_parse!(loc: eat_location >> hall: eat_hall_level >> castle: eat_castle_level >>
                       (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
@@ -667,32 +667,151 @@ impl std::fmt::Debug for H3MMap {
 }
 
 #[derive(Debug)]
-struct H3MObject {
+struct H3MObjectTemplate {
     filename: String,
     shape_mask: [u8; 6],
     visit_mask: [u8; 6],
     terrain_type_mask1: u16,
     terrain_type_mask2: u16,
     class: u32,
-    number: u32,
+    subclass: u32,
     group: u8,
     is_overlay: bool,
 }
 
-named!(eat_object<H3MObject>, do_parse!(
+named!(eat_object_template<H3MObjectTemplate>, do_parse!(
     filename: eat_string >>
     shape_mask: count_fixed!(u8, eat_8, 6) >>
     visit_mask: count_fixed!(u8, eat_8, 6) >>
     terrain_type_mask1: eat_16 >>
     terrain_type_mask2: eat_16 >>
     class: eat_32 >>
-    number: eat_32 >>
+    subclass: eat_32 >>
     group: eat_8 >>
     is_overlay: eat_flag >>
     zeroes: tag!(&[0u8; 16]) >>
-    (H3MObject {
+    (H3MObjectTemplate {
         filename, shape_mask, visit_mask, terrain_type_mask1, terrain_type_mask2,
-        class, number, group, is_overlay,
+        class, subclass, group, is_overlay,
+    })
+));
+
+#[derive(Debug)]
+enum H3MBuildings {
+    Custom([u8; 12]),
+    Fort(bool),
+}
+
+named!(eat_buildings<H3MBuildings>,
+       switch!(eat_flag,
+               true => map!(count_fixed!(u8, eat_8, 12), |m| H3MBuildings::Custom(m)) |
+               false => map!(eat_flag, |f| H3MBuildings::Fort(f))
+       )
+);
+
+#[derive(Debug)]
+struct H3MTownEvent {
+    event: H3MEvent,
+    buildings: [u8; 6],
+    creatures: [u16; 7],
+    unknown: u32,
+}
+
+named!(eat_town_event<H3MTownEvent>, do_parse!(
+    event: eat_event >>
+    buildings: count_fixed!(u8, eat_8, 6) >>
+    creatures: count_fixed!(u16, eat_16, 7) >>
+    unknown: eat_32 >>
+    (H3MTownEvent {
+        event, buildings, creatures, unknown
+    })
+));
+
+#[derive(Debug)]
+struct H3MObjectTown {
+    id: u32,
+    owner: u8,
+    name: Option<String>,
+    garrison: Option<Vec<(H3MCreature, u16)>>, // TODO: always 7 slots
+    group_formation: bool,
+    buildings: H3MBuildings,
+    forced_spells: [u8; 9],
+    allowed_spells: [u8; 9],
+    events: Vec<H3MTownEvent>,
+    alignment: u8,
+}
+
+named!(eat_obj_town<H3MObjectTown>, do_parse!(
+    id: eat_32 >>
+    owner: eat_8 >>
+    name: eat_option!(eat_string) >>
+    garrison: eat_option!(count!(tuple!(eat_creature, eat_16), 7)) >>
+    group_formation: eat_flag >>
+    buildings: eat_buildings >>
+    forced_spells: count_fixed!(u8, eat_8, 9) >>
+    allowed_spells: count_fixed!(u8, eat_8, 9) >>
+    events: length_count!(eat_32, eat_town_event) >>
+    alignment: eat_8 >>
+    zeroes: tag!([0u8; 3]) >>
+    (H3MObjectTown{
+        id, owner, name, garrison, group_formation, buildings,
+        forced_spells, allowed_spells, events, alignment
+    })
+));
+
+#[derive(Debug)]
+enum H3MObjectSettings {
+    Unimplemented,
+    RandomTown(H3MObjectTown),
+    Town(H3MObjectTown),
+}
+
+named_args!(eat_object_settings(class: u32)<H3MObjectSettings>,
+            switch!(
+                map!(value!(class), |c| { println!("class: {}", c); c }),
+                77 => map!(eat_obj_town, |t| H3MObjectSettings::RandomTown(t)) |
+                98 => map!(eat_obj_town, |t| H3MObjectSettings::Town(t)) |
+                _ => value!(H3MObjectSettings::Unimplemented, dbg!(tag!("unsupported object class")))
+            )
+);
+
+#[derive(Debug)]
+struct H3MObject {
+    loc: H3MLocation,
+    id: u32,
+    settings: H3MObjectSettings,
+}
+
+named_args!(eat_object<'a>(templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
+    loc: eat_location >>
+    id: eat_32 >>
+    _zeroes: tag!([0u8; 5]) >>
+    settings: call!(eat_object_settings, templates[id as usize].class) >>
+    (H3MObject {
+        loc, id, settings
+    })
+));
+
+#[derive(Debug)]
+struct H3MEvent {
+    name: String,
+    text: String,
+    resources: [u32; 7],
+    todo: [u8; 3],
+    first_occurence: u16,
+    repeat_period: u16,
+}
+
+named!(eat_event<H3MEvent>, do_parse!(
+    name: eat_string >>
+    text: eat_string >>
+    resources: count_fixed!(u32, eat_32, 7) >>
+    todo: count_fixed!(u8, eat_8, 3) >>
+    first_occurence: eat_16 >>
+    repeat_period: eat_16 >>
+    zeroes: tag!([0u8; 16]) >>
+    (H3MEvent {
+        name, text, resources, todo, first_occurence, repeat_period
     })
 ));
 
@@ -713,7 +832,9 @@ struct H3MFile {
     heroes: Vec<Option<H3MHeroCustomization>>, // TODO: this always has 156 items
     land: H3MMap,
     underground: Option<H3MMap>,
+    object_templates: Vec<H3MObjectTemplate>,
     objects: Vec<H3MObject>,
+    //events: Vec<H3MEvent>,
 }
 
 named!(eat_h3m<H3MFile>, do_parse!(
@@ -727,7 +848,7 @@ named!(eat_h3m<H3MFile>, do_parse!(
         _ => map!(count_fixed!(u8, eat_8, 8), |x| Some(x))
     ) >>
     available_heroes: eat_available_heroes >>
-    zeroes: tag!(&[0u8; 31]) >>
+    _zeroes: tag!([0u8; 31]) >>
     artifacts: count_fixed!(u8, eat_8, 18) >>
     spells: count_fixed!(u8, eat_8, 9) >>
     skills: count_fixed!(u8, eat_8, 4) >>
@@ -738,7 +859,10 @@ named!(eat_h3m<H3MFile>, do_parse!(
         false => value!(None) |
         true => map!(count!(eat_tile, header.get_width() * header.get_height()), |x| Some(x))
     ) >>
-    objects: length_count!(eat_32, eat_object) >>
+    object_templates: length_count!(eat_32, eat_object_template) >>
+    objects: length_count!(map!(eat_32, |n| n.min(1)), call!(eat_object, &object_templates)) >>
+    //events: length_count!(eat_32, eat_event) >>
+    //_trailing_zeroes: count!(tag!([0u8]), 124) >>
     (H3MFile {
         header,
         players: [p0, p1, p2, p3, p4, p5, p6, p7],
@@ -746,13 +870,11 @@ named!(eat_h3m<H3MFile>, do_parse!(
         artifacts, spells, skills, rumors, heroes,
         land: H3MMap { tiles: land },
         underground: underground.map(|tiles| H3MMap { tiles }),
-        objects,
+        object_templates, objects, //events
     })
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-use std::fmt::Write;
 
 fn main() {
     let res = File::open("rust.h3m").and_then(|f| {
@@ -764,18 +886,20 @@ fn main() {
     match res {
         Ok(bin) => {
             println!("unzipped size: {}", bin.len());
-            
-            let mut dump = String::new();
-            let mut count: usize = 0;
-            for byte in &bin {
-                write!(dump, "{:02X} ", byte).unwrap();
-                count += 1;
-                if count % 32 == 0 {
-                    dump.push_str("\n");
-                }
-            }
 
-            println!("\n{}", dump);
+            if false {
+                use std::fmt::Write;
+                let mut dump = String::new();
+                let mut count: usize = 0;
+                for byte in &bin {
+                    write!(dump, "{:02X} ", byte).unwrap();
+                    count += 1;
+                    if count % 32 == 0 {
+                        dump.push_str("\n");
+                    }
+                }
+                println!("\n{}", dump);
+            }
 
             match eat_h3m(&bin) {
                 nom::IResult::Done(rem, doc) => {

@@ -198,9 +198,19 @@ h3m_enum! { <H3MPlayerBehavior, eat_player_behavior, eat_8>
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
+struct H3MResources([u32; 7]);
+
+named!(eat_resources<H3MResources>, map!(count_fixed!(u32, eat_32, 7), |xs| H3MResources(xs)));
+
+#[derive(Debug)]
 struct H3MArtifact(u8);
 
-named!(artifact<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i)));
+named!(eat_artifact<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i)));
+
+#[derive(Debug)]
+struct H3MArtifact2(u16);
+
+named!(eat_artifact2<H3MArtifact2>, map!(eat_16, |i| H3MArtifact2(i))); 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -277,7 +287,7 @@ enum H3MVictoryCondition {
 }
 
 named_args!(eat_victory(code: u8)<H3MVictoryCondition>, switch!(value!(code),
-    0x00 => do_parse!(art: artifact >> (H3MVictoryCondition::AcquireArtifact(art))) |
+    0x00 => do_parse!(art: eat_artifact >> (H3MVictoryCondition::AcquireArtifact(art))) |
     0x01 => do_parse!(cr: eat_creature >> amount: eat_32 >> (H3MVictoryCondition::AccumCreatures(cr, amount))) |
     0x02 => do_parse!(res: eat_resource >> amount: eat_32 >> (H3MVictoryCondition::AccumResources(res, amount))) |
     0x03 => do_parse!(loc: eat_location >> hall: eat_hall_level >> castle: eat_castle_level >>
@@ -288,7 +298,7 @@ named_args!(eat_victory(code: u8)<H3MVictoryCondition>, switch!(value!(code),
     0x07 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatMoster(loc))) |
     0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
     0x09 => value!(H3MVictoryCondition::FlagAllMines) |
-    0x0A => do_parse!(art: artifact >> loc: eat_location >> (H3MVictoryCondition::TransportArtifact(art, loc)))
+    0x0A => do_parse!(art: eat_artifact >> loc: eat_location >> (H3MVictoryCondition::TransportArtifact(art, loc)))
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -431,7 +441,7 @@ struct H3MAvailableHeroes {
 
 named!(eat_available_heroes<H3MAvailableHeroes>, do_parse!(
     mask: count_fixed!(u8, eat_8, 20) >>
-    zeroes: tag!(&[0u8; 4]) >>
+    _zeroes: tag!([0u8; 4]) >>
     settings: length_count!(eat_8, eat_hero_availability) >>
     (H3MAvailableHeroes {
         mask, settings,
@@ -450,6 +460,18 @@ h3m_enum! { <H3MHeroGender, eat_hero_gender, eat_8>
     (0x00, Male)
     (0x01, Female)
     (0xFF, Default)
+}
+
+h3m_enum! { <H3MColor, eat_color, eat_8>
+    (0, Red)
+    (1, Blue)
+    (2, Tan)
+    (3, Green)
+    (4, Orange)
+    (5, Purple)
+    (6, Teal)
+    (7, Pink)
+    (0xFF, Unspecified)
 }
 
 #[derive(Debug)]
@@ -689,7 +711,7 @@ named!(eat_object_template<H3MObjectTemplate>, do_parse!(
     subclass: eat_32 >>
     group: eat_8 >>
     is_overlay: eat_flag >>
-    zeroes: tag!(&[0u8; 16]) >>
+    _zeroes: tag!([0u8; 16]) >>
     (H3MObjectTemplate {
         filename, shape_mask, visit_mask, terrain_type_mask1, terrain_type_mask2,
         class, subclass, group, is_overlay,
@@ -730,7 +752,7 @@ named!(eat_town_event<H3MTownEvent>, do_parse!(
 #[derive(Debug)]
 struct H3MObjectTown {
     id: u32,
-    owner: u8,
+    color: H3MColor,
     name: Option<String>,
     garrison: Option<Vec<(H3MCreature, u16)>>, // TODO: always 7 slots
     group_formation: bool,
@@ -743,7 +765,7 @@ struct H3MObjectTown {
 
 named!(eat_obj_town<H3MObjectTown>, do_parse!(
     id: eat_32 >>
-    owner: eat_8 >>
+    color: eat_color >>
     name: eat_option!(eat_string) >>
     garrison: eat_option!(count!(tuple!(eat_creature, eat_16), 7)) >>
     group_formation: eat_flag >>
@@ -752,27 +774,95 @@ named!(eat_obj_town<H3MObjectTown>, do_parse!(
     allowed_spells: count_fixed!(u8, eat_8, 9) >>
     events: length_count!(eat_32, eat_town_event) >>
     alignment: eat_8 >>
-    zeroes: tag!([0u8; 3]) >>
+    _zeroes: tag!([0u8; 3]) >>
     (H3MObjectTown{
-        id, owner, name, garrison, group_formation, buildings,
+        id, color, name, garrison, group_formation, buildings,
         forced_spells, allowed_spells, events, alignment
     })
 ));
 
 #[derive(Debug)]
+struct H3MObjectHero {
+    id: u32,
+    color: H3MColor,
+    hero_type: u8,
+    name: Option<String>,
+    exp: Option<u32>,
+    face: Option<u8>,
+    skills: Option<Vec<(u8, H3MSkillLevel)>>,
+    garrison: Option<Vec<(H3MCreature, u16)>>, // TODO: always 7 slots
+    group_formation: bool,
+    equipment: Option<H3MHeroEquipment>,
+    patrol_radius: u8,
+    bio: Option<String>,
+    gender: H3MHeroGender,
+    spells: Option<[u8; 9]>,
+    stats: Option<(u8, u8, u8, u8)>,
+}
+
+named!(eat_obj_hero<H3MObjectHero>, do_parse!(
+    id: eat_32 >>
+    color: eat_color >>
+    hero_type: eat_8 >>
+    name: eat_option!(eat_string) >>
+    exp: eat_option!(eat_32) >>
+    face: eat_option!(eat_8) >>
+    skills: eat_option!(length_count!(eat_32, tuple!(eat_8, eat_skill_level))) >>
+    garrison: eat_option!(count!(tuple!(eat_creature, eat_16), 7)) >>
+    group_formation: eat_flag >>
+    equipment: eat_option!(eat_hero_equipment) >>
+    patrol_radius: eat_8 >>
+    bio: eat_option!(eat_string) >>
+    gender: eat_hero_gender >>
+    spells: eat_option!(count_fixed!(u8, eat_8, 9)) >>
+    stats: eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8)) >>
+    _zeros: tag!([0u8; 16]) >>
+    (H3MObjectHero {
+        id, color, hero_type, name, exp, face, skills, garrison, group_formation,
+        equipment, patrol_radius, bio, gender, spells, stats,
+    })
+));
+
+#[derive(Debug)]
+struct H3MObjectMonster {
+    id: u32,
+    quantity: u16,
+    mood: u8,
+    reward: Option<(String, H3MResources, H3MArtifact2)>,
+    never_runaway: bool,
+    never_grow: bool,
+}
+
+named!(eat_obj_monster<H3MObjectMonster>, do_parse!(
+    id: eat_32 >>
+    quantity: eat_16 >>
+    mood: eat_8 >>
+    reward: eat_option!(tuple!(eat_string, eat_resources, eat_artifact2)) >>
+    never_runaway: eat_flag >>
+    never_grow: eat_flag >>
+    _zeroes: tag!([0u8; 2]) >>
+    (H3MObjectMonster {
+        id, quantity, mood, reward, never_runaway, never_grow,
+    })
+));
+
+#[derive(Debug)]
 enum H3MObjectSettings {
-    Unimplemented,
+    Hero(H3MObjectHero),
+    Monster(H3MObjectMonster),
+    RandomHero(H3MObjectHero),
     RandomTown(H3MObjectTown),
     Town(H3MObjectTown),
 }
 
 named_args!(eat_object_settings(class: u32)<H3MObjectSettings>,
-            switch!(
-                map!(value!(class), |c| { println!("class: {}", c); c }),
-                77 => map!(eat_obj_town, |t| H3MObjectSettings::RandomTown(t)) |
-                98 => map!(eat_obj_town, |t| H3MObjectSettings::Town(t)) |
-                _ => value!(H3MObjectSettings::Unimplemented, dbg!(tag!("unsupported object class")))
-            )
+    switch!(map!(value!(class), |c| { println!("class: {}", c); c }),
+        34 => map!(eat_obj_hero, |h| H3MObjectSettings::Hero(h)) |
+        54 => map!(eat_obj_monster, |m| H3MObjectSettings::Monster(m)) |
+        70 => map!(eat_obj_hero, |h| H3MObjectSettings::RandomHero(h)) |
+        77 => map!(eat_obj_town, |t| H3MObjectSettings::RandomTown(t)) |
+        98 => map!(eat_obj_town, |t| H3MObjectSettings::Town(t))
+    )
 );
 
 #[derive(Debug)]
@@ -796,7 +886,7 @@ named_args!(eat_object<'a>(templates: &'a[H3MObjectTemplate])<H3MObject>, do_par
 struct H3MEvent {
     name: String,
     text: String,
-    resources: [u32; 7],
+    resources: H3MResources,
     todo: [u8; 3],
     first_occurence: u16,
     repeat_period: u16,
@@ -805,7 +895,7 @@ struct H3MEvent {
 named!(eat_event<H3MEvent>, do_parse!(
     name: eat_string >>
     text: eat_string >>
-    resources: count_fixed!(u32, eat_32, 7) >>
+    resources: eat_resources >>
     todo: count_fixed!(u8, eat_8, 3) >>
     first_occurence: eat_16 >>
     repeat_period: eat_16 >>
@@ -860,7 +950,7 @@ named!(eat_h3m<H3MFile>, do_parse!(
         true => map!(count!(eat_tile, header.get_width() * header.get_height()), |x| Some(x))
     ) >>
     object_templates: length_count!(eat_32, eat_object_template) >>
-    objects: length_count!(map!(eat_32, |n| n.min(1)), call!(eat_object, &object_templates)) >>
+    objects: length_count!(map!(eat_32, |n| n.min(4)), call!(eat_object, &object_templates)) >>
     //events: length_count!(eat_32, eat_event) >>
     //_trailing_zeroes: count!(tag!([0u8]), 124) >>
     (H3MFile {
@@ -875,6 +965,38 @@ named!(eat_h3m<H3MFile>, do_parse!(
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+fn print_map(doc: &H3MFile) {
+    let w = doc.header.get_width();
+    let h = doc.header.get_height();
+
+    let mut line = String::new();
+    for r in 0..h {
+        for sub in 0..3 {
+            for c in 0..w {
+                line.clear();
+                let tile = &doc.land.tiles[r * w + c];
+                if let H3MRoadType::RdNone = tile.road_type {
+                    line.push_str("...");
+                } else {
+                    let pat = tile.road_topo.to_debug();
+                    let base = 3 * if tile.flip_road_x { [2, 1, 0] } else { [0, 1, 2] } [sub];
+                    if tile.flip_road_y {
+                        line.push(pat[base + 2] as char);
+                        line.push(pat[base + 1] as char);
+                        line.push(pat[base + 0] as char);
+                    } else {
+                        line.push(pat[base + 0] as char);
+                        line.push(pat[base + 1] as char);
+                        line.push(pat[base + 2] as char);
+                    }
+                }
+                print!("{}", line.color(tile.terrain.to_debug()))
+            }
+            println!();
+        }
+    }
+}
 
 fn main() {
     let res = File::open("rust.h3m").and_then(|f| {
@@ -903,37 +1025,14 @@ fn main() {
 
             match eat_h3m(&bin) {
                 nom::IResult::Done(rem, doc) => {
-                    println!("parsed document: {:#?}", doc);
+                    //println!("parsed document: {:#?}", doc);
+                    println!("object_templates: {:#?}", doc.object_templates);
+                    println!("objects: {:#?}", doc.objects);
 
-                    let w = doc.header.get_width();
-                    let h = doc.header.get_height();
-
-                    let mut line = String::new();
-                    for r in 0..h {
-                        for sub in 0..3 {
-                            for c in 0..w {
-                                line.clear();
-                                let tile = &doc.land.tiles[r * w + c];
-                                if let H3MRoadType::RdNone = tile.road_type {
-                                    line.push_str("...");
-                                } else {
-                                    let pat = tile.road_topo.to_debug();
-                                    let base = 3 * if tile.flip_road_x { [2, 1, 0] } else { [0, 1, 2] } [sub];
-                                    if tile.flip_road_y {
-                                        line.push(pat[base + 2] as char);
-                                        line.push(pat[base + 1] as char);
-                                        line.push(pat[base + 0] as char);
-                                    } else {
-                                        line.push(pat[base + 0] as char);
-                                        line.push(pat[base + 1] as char);
-                                        line.push(pat[base + 2] as char);
-                                    }
-                                }
-                                print!("{}", line.color(tile.terrain.to_debug()))
-                            }
-                            println!();
-                        }
+                    if false {
+                        print_map(&doc);
                     }
+
                     println!("remaining: {:?}", rem.len());
                 }
                 nom::IResult::Error(e) => println!("error: {:#?}", e),

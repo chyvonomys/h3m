@@ -718,19 +718,25 @@ struct H3MObjectTemplate {
     visit_mask: [u8; 6],
     terrain_type_mask1: u16,
     terrain_type_mask2: u16,
-    class: u32,
+    //class: H3MObjectClass,
+    class: [u8; 4], // TODO: pass like this until all possible classes are implemented
     subclass: u32,
     group: u8,
     is_overlay: bool,
 }
 
-named!(eat_object_template<H3MObjectTemplate>, do_parse!(
+named_args!(eat_object_template<'a>(used: &'a mut std::collections::HashSet<u32>)<H3MObjectTemplate>, do_parse!(
     filename: eat_string >>
     shape_mask: count_fixed!(u8, eat_8, 6) >>
     visit_mask: count_fixed!(u8, eat_8, 6) >>
     terrain_type_mask1: eat_16 >>
     terrain_type_mask2: eat_16 >>
-    class: eat_32 >>
+    class: do_parse!(
+        c: tap!(x: peek!(eat_32) => { used.insert(x); }) >>
+        //cl: tap!(x: eat_obj_class => { println!("is known as: {:?}", x) }) >>
+        cl: count_fixed!(u8, eat_8, 4) >>
+        (cl)
+    ) >>
     subclass: eat_32 >>
     group: eat_8 >>
     is_overlay: eat_flag >>
@@ -775,7 +781,7 @@ named!(eat_town_event<H3MTownEvent>, do_parse!(
 #[derive(Debug)]
 struct H3MObjectTown {
     id: u32,
-    color: H3MColor,
+    owner: H3MColor,
     name: Option<String>,
     garrison: Option<Vec<(H3MCreature, u16)>>, // TODO: always 7 slots
     group_formation: bool,
@@ -786,9 +792,9 @@ struct H3MObjectTown {
     alignment: u8,
 }
 
-named!(eat_obj_town<H3MObjectTown>, do_parse!(
+named!(eat_obj_town<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
-    color: eat_color >>
+    owner: eat_color >>
     name: eat_option!(eat_string) >>
     garrison: eat_option!(count!(tuple!(eat_creature, eat_16), 7)) >>
     group_formation: eat_flag >>
@@ -798,16 +804,16 @@ named!(eat_obj_town<H3MObjectTown>, do_parse!(
     events: length_count!(eat_32, eat_town_event) >>
     alignment: eat_8 >>
     _zeroes: tag!([0u8; 3]) >>
-    (H3MObjectTown{
-        id, color, name, garrison, group_formation, buildings,
+    (H3MObjectProperties::Town(H3MObjectTown{
+        id, owner, name, garrison, group_formation, buildings,
         forced_spells, allowed_spells, events, alignment
-    })
+    }))
 ));
 
 #[derive(Debug)]
 struct H3MObjectHero {
     id: u32,
-    color: H3MColor,
+    owner: H3MColor,
     hero_type: u8,
     name: Option<String>,
     exp: Option<u32>,
@@ -823,9 +829,9 @@ struct H3MObjectHero {
     stats: Option<(u8, u8, u8, u8)>,
 }
 
-named!(eat_obj_hero<H3MObjectHero>, do_parse!(
+named!(eat_obj_hero<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
-    color: eat_color >>
+    owner: eat_color >>
     hero_type: eat_8 >>
     name: eat_option!(eat_string) >>
     exp: eat_option!(eat_32) >>
@@ -840,10 +846,10 @@ named!(eat_obj_hero<H3MObjectHero>, do_parse!(
     spells: eat_option!(eat_spells_mask) >>
     stats: eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8)) >>
     _zeros: tag!([0u8; 16]) >>
-    (H3MObjectHero {
-        id, color, hero_type, name, exp, face, skills, garrison, group_formation,
+    (H3MObjectProperties::Hero(H3MObjectHero {
+        id, owner, hero_type, name, exp, face, skills, garrison, group_formation,
         equipment, patrol_radius, bio, gender, spells, stats,
-    })
+    }))
 ));
 
 #[derive(Debug)]
@@ -856,7 +862,7 @@ struct H3MObjectMonster {
     never_grow: bool,
 }
 
-named!(eat_obj_monster<H3MObjectMonster>, do_parse!(
+named!(eat_obj_monster<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
     quantity: eat_16 >>
     mood: eat_8 >>
@@ -864,60 +870,79 @@ named!(eat_obj_monster<H3MObjectMonster>, do_parse!(
     never_runaway: eat_flag >>
     never_grow: eat_flag >>
     _zeroes: tag!([0u8; 2]) >>
-    (H3MObjectMonster {
+    (H3MObjectProperties::Monster(H3MObjectMonster {
         id, quantity, mood, reward, never_runaway, never_grow,
-    })
+    }))
 ));
 
-named!(eat_obj_placeholder<H3MObjectSettings>, do_parse!(
-    color: eat_color >>
+named!(eat_obj_placeholder<H3MObjectProperties>, do_parse!(
+    owner: eat_color >>
     id: eat_8 >>
     power_rating: switch!(value!(id == 0xFF),
                           true => map!(eat_8, |x| Some(x)) |
                           false => value!(None)
     ) >>
-    (H3MObjectSettings::HeroPlaceholder {
-        color, id, power_rating
+    (H3MObjectProperties::HeroPlaceholder {
+        owner, id, power_rating
     })
 ));
 
 #[derive(Debug)]
-enum H3MObjectSettings {
+enum H3MObjectProperties {
     Hero(H3MObjectHero),
     Monster(H3MObjectMonster),
-    RandomHero(H3MObjectHero),
-    RandomTown(H3MObjectTown),
     Town(H3MObjectTown),
-    HeroPlaceholder { color: H3MColor, id: u8, power_rating: Option<u8> },
-    RiverDelta,
+    HeroPlaceholder { owner: H3MColor, id: u8, power_rating: Option<u8> },
+    NoProperties,
 }
 
-named_args!(eat_object_settings(class: u32)<H3MObjectSettings>,
-    switch!(map!(value!(class), |c| { println!("class: {}", c); c }),
-        34 => map!(eat_obj_hero, |h| H3MObjectSettings::Hero(h)) |
-        54 => map!(eat_obj_monster, |m| H3MObjectSettings::Monster(m)) |
-        70 => map!(eat_obj_hero, |h| H3MObjectSettings::RandomHero(h)) |
-        77 => map!(eat_obj_town, |t| H3MObjectSettings::RandomTown(t)) |
-        98 => map!(eat_obj_town, |t| H3MObjectSettings::Town(t)) |
-        214 => call!(eat_obj_placeholder) |
-        143 => value!(H3MObjectSettings::RiverDelta)
-    )
-);
+named!(eat_obj_noprops<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
+
+fn eat_obj_unimpl(_: &[u8]) -> nom::IResult<&[u8], H3MObjectProperties> {
+    unimplemented!()
+}
+
+h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8]) -> nom::IResult<&[u8], H3MObjectProperties>>
+    (34, Hero, eat_obj_hero)
+    (43, MonolithEntrance, eat_obj_unimpl)
+    (44, MonolithExit, eat_obj_unimpl)
+    (45, MonolithTwoWay, eat_obj_unimpl)
+    (53, Mine, eat_obj_unimpl)
+    (54, Monster, eat_obj_monster)
+    (70, RandomHero, eat_obj_hero)
+    (71, RandomMonster, eat_obj_monster)
+    (77, RandomTown, eat_obj_town)
+    (98, Town, eat_obj_town)
+    (103, SubterraneanGate, eat_obj_noprops)
+    (119, DeadVegetation, eat_obj_unimpl)
+    (124, Hole, eat_obj_unimpl)
+    (134, Mountain, eat_obj_unimpl)
+    (143, RiverDelta, eat_obj_noprops)
+    (214, HeroPlaceholder, eat_obj_placeholder)
+}
 
 #[derive(Debug)]
 struct H3MObject {
     loc: H3MLocation,
     template_idx: u32,
-    settings: H3MObjectSettings,
+    properties: H3MObjectProperties,
+}
+
+fn get_props_parser(templates: &[H3MObjectTemplate], idx: u32) -> fn (&[u8]) -> nom::IResult<&[u8], H3MObjectProperties> {
+    match eat_obj_class(&templates[idx as usize].class) {
+        nom::IResult::Done(_, class) => class.to_debug(),
+        nom::IResult::Error(_) => panic!("parse obj"),
+        nom::IResult::Incomplete(_) => panic!("parse obj"),
+    }
 }
 
 named_args!(eat_object<'a>(templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
     loc: eat_location >>
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
-    settings: call!(eat_object_settings, templates[template_idx as usize].class) >>
+    properties: call!(get_props_parser(templates, template_idx)) >>
     (H3MObject {
-        loc, template_idx, settings
+        loc, template_idx, properties
     })
 ));
 
@@ -966,7 +991,7 @@ struct H3MFile {
     events: Vec<H3MEvent>,
 }
 
-named!(eat_h3m<H3MFile>, do_parse!(
+named_args!(eat_h3m<'a>(used_classes: &'a mut std::collections::HashSet<u32>)<H3MFile>, do_parse!(
     header: eat_header >>
     p0: eat_player >> p1: eat_player >> p2: eat_player >> p3: eat_player >>
     p4: eat_player >> p5: eat_player >> p6: eat_player >> p7: eat_player >>
@@ -988,7 +1013,10 @@ named!(eat_h3m<H3MFile>, do_parse!(
         false => value!(None) |
         true => map!(count!(eat_tile, header.get_width() * header.get_height()), |x| Some(x))
     ) >>
-    object_templates: length_count!(eat_32, eat_object_template) >>
+    object_templates: tap!(
+        ts: length_count!(eat_32, call!(eat_object_template, used_classes)) =>
+        { println!("used classes: {:?}", used_classes) }
+    ) >>
     objects: length_count!(map!(eat_32, |n| n), call!(eat_object, &object_templates)) >>
     events: length_count!(eat_32, eat_event) >>
     _trailing_zeroes: count!(tag!([0u8]), 124) >>
@@ -1038,11 +1066,15 @@ fn print_map(doc: &H3MFile) {
 }
 
 fn main() {
-    let res = File::open("rust.h3m").and_then(|f| {
+    let read_file = |f| {
         let br = BufReader::new(f);
         let mut buf: Vec<u8> = Vec::new();
         GzDecoder::new(br).read_to_end(&mut buf).map(move |_| buf)
-    });
+    };
+
+    let argument = std::env::args().nth(1).ok_or("no arguments specified".to_owned());
+
+    let res = argument.and_then(|p| File::open(p).and_then(read_file).map_err(|e| e.to_string()));
 
     match res {
         Ok(bin) => {
@@ -1062,7 +1094,7 @@ fn main() {
                 println!("\n{}", dump);
             }
 
-            match eat_h3m(&bin) {
+            match eat_h3m(&bin, &mut std::collections::HashSet::new()) {
                 nom::IResult::Done(rem, doc) => {
                     println!("parsed document: {:#?}", doc);
 

@@ -725,7 +725,7 @@ struct H3MObjectTemplate {
     is_overlay: bool,
 }
 
-named_args!(eat_object_template<'a>(used: &'a mut std::collections::HashSet<u32>)<H3MObjectTemplate>, do_parse!(
+named_args!(eat_object_template<'a>(used: &'a mut std::collections::BTreeSet<u32>)<H3MObjectTemplate>, do_parse!(
     filename: eat_string >>
     shape_mask: count_fixed!(u8, eat_8, 6) >>
     visit_mask: count_fixed!(u8, eat_8, 6) >>
@@ -792,7 +792,7 @@ struct H3MObjectTown {
     alignment: u8,
 }
 
-named!(eat_obj_town<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_town(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
     owner: eat_color >>
     name: eat_option!(eat_string) >>
@@ -829,7 +829,7 @@ struct H3MObjectHero {
     stats: Option<(u8, u8, u8, u8)>,
 }
 
-named!(eat_obj_hero<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_hero(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
     owner: eat_color >>
     hero_type: eat_8 >>
@@ -862,7 +862,7 @@ struct H3MObjectMonster {
     never_grow: bool,
 }
 
-named!(eat_obj_monster<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_monster(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
     quantity: eat_16 >>
     mood: eat_8 >>
@@ -875,7 +875,7 @@ named!(eat_obj_monster<H3MObjectProperties>, do_parse!(
     }))
 ));
 
-named!(eat_obj_placeholder<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_placeholder(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     id: eat_8 >>
     power_rating: switch!(value!(id == 0xFF),
@@ -896,13 +896,13 @@ enum H3MObjectProperties {
     NoProperties,
 }
 
-named!(eat_obj_noprops<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
+named_args!(eat_obj_noprops(class: H3MObjectClass)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
 
-fn eat_obj_unimpl(_: &[u8]) -> nom::IResult<&[u8], H3MObjectProperties> {
-    unimplemented!()
+fn eat_obj_unimpl<'a>(_: &'a[u8], class: H3MObjectClass) -> nom::IResult<&'a[u8], H3MObjectProperties> {
+    panic!("class `{:?}` is not implemented yet", class)
 }
 
-h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8]) -> nom::IResult<&[u8], H3MObjectProperties>>
+h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
     (34, Hero, eat_obj_hero)
     (43, MonolithEntrance, eat_obj_unimpl)
     (44, MonolithExit, eat_obj_unimpl)
@@ -916,10 +916,21 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8]) -> nom::IResult<&
     (103, SubterraneanGate, eat_obj_noprops)
     (119, DeadVegetation, eat_obj_unimpl)
     (124, Hole, eat_obj_unimpl)
-    (134, Mountain, eat_obj_unimpl)
+    (134, Mountain, eat_obj_noprops)
     (143, RiverDelta, eat_obj_noprops)
+    (206, DesertHills, eat_obj_noprops)
+    (207, DirtHills, eat_obj_noprops)
+    (208, GrassHills, eat_obj_noprops)
+    (209, RoughHills, eat_obj_noprops)
+    (210, SubterraneanRocks, eat_obj_noprops)
     (214, HeroPlaceholder, eat_obj_placeholder)
 }
+
+impl Clone for H3MObjectClass {
+    fn clone(&self) -> Self { *self }
+}
+
+impl Copy for H3MObjectClass {}
 
 #[derive(Debug)]
 struct H3MObject {
@@ -928,11 +939,14 @@ struct H3MObject {
     properties: H3MObjectProperties,
 }
 
-fn get_props_parser(templates: &[H3MObjectTemplate], idx: u32) -> fn (&[u8]) -> nom::IResult<&[u8], H3MObjectProperties> {
-    match eat_obj_class(&templates[idx as usize].class) {
-        nom::IResult::Done(_, class) => class.to_debug(),
-        nom::IResult::Error(_) => panic!("parse obj"),
-        nom::IResult::Incomplete(_) => panic!("parse obj"),
+fn eat_obj_class_or_panic(inp: &[u8; 4]) -> H3MObjectClass {
+    let mut id = inp[0] as u32;
+    id += (inp[1] as u32) << 8;
+    id += (inp[2] as u32) << 16;
+    id += (inp[3] as u32) << 24;
+    match eat_obj_class(inp) {
+        nom::IResult::Done(_, class) => class,
+        _ => panic!("error parsing class: {}", id),
     }
 }
 
@@ -940,7 +954,8 @@ named_args!(eat_object<'a>(templates: &'a[H3MObjectTemplate])<H3MObject>, do_par
     loc: eat_location >>
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
-    properties: call!(get_props_parser(templates, template_idx)) >>
+    class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class)) >>
+    properties: call!(class.to_debug(), class) >>
     (H3MObject {
         loc, template_idx, properties
     })
@@ -991,7 +1006,7 @@ struct H3MFile {
     events: Vec<H3MEvent>,
 }
 
-named_args!(eat_h3m<'a>(used_classes: &'a mut std::collections::HashSet<u32>)<H3MFile>, do_parse!(
+named_args!(eat_h3m<'a>(used_classes: &'a mut std::collections::BTreeSet<u32>)<H3MFile>, do_parse!(
     header: eat_header >>
     p0: eat_player >> p1: eat_player >> p2: eat_player >> p3: eat_player >>
     p4: eat_player >> p5: eat_player >> p6: eat_player >> p7: eat_player >>
@@ -1094,7 +1109,7 @@ fn main() {
                 println!("\n{}", dump);
             }
 
-            match eat_h3m(&bin, &mut std::collections::HashSet::new()) {
+            match eat_h3m(&bin, &mut std::collections::BTreeSet::new()) {
                 nom::IResult::Done(rem, doc) => {
                     println!("parsed document: {:#?}", doc);
 

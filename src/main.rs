@@ -160,13 +160,29 @@ h3m_enum! { <H3MTownKind, eat_town_kind, eat_8>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
 struct H3MLocation(u8, u8, bool);
 
 named!(eat_location<H3MLocation>, do_parse!(
     x: eat_8 >> y: eat_8 >> u: eat_flag >>
     (H3MLocation(x, y, u))
 ));
+
+impl std::fmt::Debug for H3MLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<{} {}{}>", self.0, self.1, if self.2 { " U" } else { "" })
+    }
+}
+
+struct H3MSpellsMask(u32, u32, u8);
+named!(eat_spells_mask<H3MSpellsMask>,
+       map!(tuple!(eat_32, eat_32, eat_8), |t| H3MSpellsMask(t.0, t.1, t.2))
+);
+
+impl std::fmt::Debug for H3MSpellsMask {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<{:08b} {:032b} {:032b}>", self.2, self.1, self.0) // first bit last
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -197,10 +213,17 @@ h3m_enum! { <H3MPlayerBehavior, eat_player_behavior, eat_8>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
 struct H3MResources([u32; 7]);
 
 named!(eat_resources<H3MResources>, map!(count_fixed!(u32, eat_32, 7), |xs| H3MResources(xs)));
+
+impl std::fmt::Debug for H3MResources {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "<W:{} M:{} O:{} S:{} C:{} G:{} $:{}>",
+               self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6]
+        )
+    }
+}
 
 #[derive(Debug)]
 struct H3MArtifact(u8);
@@ -536,7 +559,7 @@ struct H3MHeroCustomization {
     equipment: Option<H3MHeroEquipment>,
     bio: Option<String>,
     gender: H3MHeroGender,
-    spells: Option<[u8; 9]>,
+    spells: Option<H3MSpellsMask>,
     stats: Option<(u8, u8, u8, u8)>,
 }
 
@@ -546,7 +569,7 @@ named!(eat_hero_customization<H3MHeroCustomization>, do_parse!(
     equipment: eat_option!(eat_hero_equipment) >>
     bio: eat_option!(eat_string) >>
     gender: eat_hero_gender >>
-    spells: eat_option!(count_fixed!(u8, eat_8, 9)) >>
+    spells: eat_option!(eat_spells_mask) >>
     stats: eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8)) >>
     (H3MHeroCustomization {
         exp, skills, equipment, bio, gender, spells, stats,
@@ -757,8 +780,8 @@ struct H3MObjectTown {
     garrison: Option<Vec<(H3MCreature, u16)>>, // TODO: always 7 slots
     group_formation: bool,
     buildings: H3MBuildings,
-    forced_spells: [u8; 9],
-    allowed_spells: [u8; 9],
+    forced_spells: H3MSpellsMask,
+    allowed_spells: H3MSpellsMask,
     events: Vec<H3MTownEvent>,
     alignment: u8,
 }
@@ -770,8 +793,8 @@ named!(eat_obj_town<H3MObjectTown>, do_parse!(
     garrison: eat_option!(count!(tuple!(eat_creature, eat_16), 7)) >>
     group_formation: eat_flag >>
     buildings: eat_buildings >>
-    forced_spells: count_fixed!(u8, eat_8, 9) >>
-    allowed_spells: count_fixed!(u8, eat_8, 9) >>
+    forced_spells: eat_spells_mask >>
+    allowed_spells: eat_spells_mask >>
     events: length_count!(eat_32, eat_town_event) >>
     alignment: eat_8 >>
     _zeroes: tag!([0u8; 3]) >>
@@ -796,7 +819,7 @@ struct H3MObjectHero {
     patrol_radius: u8,
     bio: Option<String>,
     gender: H3MHeroGender,
-    spells: Option<[u8; 9]>,
+    spells: Option<H3MSpellsMask>,
     stats: Option<(u8, u8, u8, u8)>,
 }
 
@@ -814,7 +837,7 @@ named!(eat_obj_hero<H3MObjectHero>, do_parse!(
     patrol_radius: eat_8 >>
     bio: eat_option!(eat_string) >>
     gender: eat_hero_gender >>
-    spells: eat_option!(count_fixed!(u8, eat_8, 9)) >>
+    spells: eat_option!(eat_spells_mask) >>
     stats: eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8)) >>
     _zeros: tag!([0u8; 16]) >>
     (H3MObjectHero {
@@ -846,6 +869,18 @@ named!(eat_obj_monster<H3MObjectMonster>, do_parse!(
     })
 ));
 
+named!(eat_obj_placeholder<H3MObjectSettings>, do_parse!(
+    color: eat_color >>
+    id: eat_8 >>
+    power_rating: switch!(value!(id == 0xFF),
+                          true => map!(eat_8, |x| Some(x)) |
+                          false => value!(None)
+    ) >>
+    (H3MObjectSettings::HeroPlaceholder {
+        color, id, power_rating
+    })
+));
+
 #[derive(Debug)]
 enum H3MObjectSettings {
     Hero(H3MObjectHero),
@@ -853,6 +888,8 @@ enum H3MObjectSettings {
     RandomHero(H3MObjectHero),
     RandomTown(H3MObjectTown),
     Town(H3MObjectTown),
+    HeroPlaceholder { color: H3MColor, id: u8, power_rating: Option<u8> },
+    RiverDelta,
 }
 
 named_args!(eat_object_settings(class: u32)<H3MObjectSettings>,
@@ -861,24 +898,26 @@ named_args!(eat_object_settings(class: u32)<H3MObjectSettings>,
         54 => map!(eat_obj_monster, |m| H3MObjectSettings::Monster(m)) |
         70 => map!(eat_obj_hero, |h| H3MObjectSettings::RandomHero(h)) |
         77 => map!(eat_obj_town, |t| H3MObjectSettings::RandomTown(t)) |
-        98 => map!(eat_obj_town, |t| H3MObjectSettings::Town(t))
+        98 => map!(eat_obj_town, |t| H3MObjectSettings::Town(t)) |
+        214 => call!(eat_obj_placeholder) |
+        143 => value!(H3MObjectSettings::RiverDelta)
     )
 );
 
 #[derive(Debug)]
 struct H3MObject {
     loc: H3MLocation,
-    id: u32,
+    template_idx: u32,
     settings: H3MObjectSettings,
 }
 
 named_args!(eat_object<'a>(templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
     loc: eat_location >>
-    id: eat_32 >>
+    template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
-    settings: call!(eat_object_settings, templates[id as usize].class) >>
+    settings: call!(eat_object_settings, templates[template_idx as usize].class) >>
     (H3MObject {
-        loc, id, settings
+        loc, template_idx, settings
     })
 ));
 
@@ -915,16 +954,16 @@ struct H3MFile {
     loss: H3MLossCondition,
     teams: Option<[u8; 8]>,
     available_heroes: H3MAvailableHeroes,
-    artifacts: [u8; 18],
-    spells: [u8; 9],
-    skills: [u8; 4],
+    banned_artifacts: [u8; 18],
+    banned_spells: H3MSpellsMask,
+    banned_skills: u32,
     rumors: Vec<(String, String)>,
     heroes: Vec<Option<H3MHeroCustomization>>, // TODO: this always has 156 items
     land: H3MMap,
     underground: Option<H3MMap>,
     object_templates: Vec<H3MObjectTemplate>,
     objects: Vec<H3MObject>,
-    //events: Vec<H3MEvent>,
+    events: Vec<H3MEvent>,
 }
 
 named!(eat_h3m<H3MFile>, do_parse!(
@@ -939,9 +978,9 @@ named!(eat_h3m<H3MFile>, do_parse!(
     ) >>
     available_heroes: eat_available_heroes >>
     _zeroes: tag!([0u8; 31]) >>
-    artifacts: count_fixed!(u8, eat_8, 18) >>
-    spells: count_fixed!(u8, eat_8, 9) >>
-    skills: count_fixed!(u8, eat_8, 4) >>
+    banned_artifacts: count_fixed!(u8, eat_8, 18) >>
+    banned_spells: eat_spells_mask >>
+    banned_skills: eat_32 >>
     rumors: length_count!(eat_32, tuple!(eat_string, eat_string)) >>
     heroes: count!(eat_option!(eat_hero_customization), 156) >>
     land: count!(eat_tile, header.get_width() * header.get_height()) >>
@@ -950,17 +989,17 @@ named!(eat_h3m<H3MFile>, do_parse!(
         true => map!(count!(eat_tile, header.get_width() * header.get_height()), |x| Some(x))
     ) >>
     object_templates: length_count!(eat_32, eat_object_template) >>
-    objects: length_count!(map!(eat_32, |n| n.min(4)), call!(eat_object, &object_templates)) >>
-    //events: length_count!(eat_32, eat_event) >>
-    //_trailing_zeroes: count!(tag!([0u8]), 124) >>
+    objects: length_count!(map!(eat_32, |n| n), call!(eat_object, &object_templates)) >>
+    events: length_count!(eat_32, eat_event) >>
+    _trailing_zeroes: count!(tag!([0u8]), 124) >>
     (H3MFile {
         header,
         players: [p0, p1, p2, p3, p4, p5, p6, p7],
         victory, loss, teams, available_heroes,
-        artifacts, spells, skills, rumors, heroes,
+        banned_artifacts, banned_spells, banned_skills, rumors, heroes,
         land: H3MMap { tiles: land },
         underground: underground.map(|tiles| H3MMap { tiles }),
-        object_templates, objects, //events
+        object_templates, objects, events
     })
 ));
 
@@ -1025,9 +1064,7 @@ fn main() {
 
             match eat_h3m(&bin) {
                 nom::IResult::Done(rem, doc) => {
-                    //println!("parsed document: {:#?}", doc);
-                    println!("object_templates: {:#?}", doc.object_templates);
-                    println!("objects: {:#?}", doc.objects);
+                    println!("parsed document: {:#?}", doc);
 
                     if false {
                         print_map(&doc);

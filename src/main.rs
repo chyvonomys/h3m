@@ -28,6 +28,16 @@ macro_rules! eat_option (
     );
 );
 
+macro_rules! versions (
+    ($i:expr, $v:expr, $roe:ident!( $($roe_args:tt)* ), $ab:ident!( $($ab_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
+        switch!($i, value!($v),
+            H3MVersion::RoE => $roe!($($roe_args)*) |
+            H3MVersion::AB => $ab!($($ab_args)*) |
+            H3MVersion::SoD => $sod!($($sod_args)*)
+        )
+    );
+);
+
 macro_rules! h3m_enum {
     ( <$t:ident, $f:ident, $p:ident, $d:ty> ($i0:expr, $x0:ident, $o0:expr) $( ($i:expr, $x:ident, $o:expr) )* ) => (
         #[derive(Debug)]
@@ -66,6 +76,11 @@ h3m_enum! { <H3MVersion, eat_version, eat_32>
     (0x00000015, AB)
     (0x0000001C, SoD)
 }
+
+impl Clone for H3MVersion {
+    fn clone(&self) -> Self { *self }
+}
+impl Copy for H3MVersion {}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -110,7 +125,7 @@ struct H3MHeader {
     name: String,
     description: String,
     difficulty: H3MDifficulty,
-    level_cap: u8, // TODO: AB/SoD only?
+    level_cap: u8, // AB/SoD
 }
 
 impl H3MHeader {
@@ -130,7 +145,7 @@ named!(eat_header<H3MHeader>, do_parse!(
     name: eat_string >>
     description: eat_string >>
     difficulty: eat_difficulty >>
-    level_cap: eat_8 >>
+    level_cap: versions!(version, value!(0u8), call!(eat_8), call!(eat_8)) >>
     (H3MHeader {
         version,
         has_players,
@@ -174,9 +189,16 @@ impl std::fmt::Debug for H3MLocation {
 }
 
 struct H3MSpellsMask(u32, u32, u8);
+
 named!(eat_spells_mask<H3MSpellsMask>,
        map!(tuple!(eat_32, eat_32, eat_8), |t| H3MSpellsMask(t.0, t.1, t.2))
 );
+
+impl Default for H3MSpellsMask {
+    fn default() -> Self {
+        H3MSpellsMask(0u32, 0u32, 0u8)
+    }
+}
 
 impl std::fmt::Debug for H3MSpellsMask {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -188,14 +210,14 @@ impl std::fmt::Debug for H3MSpellsMask {
 
 #[derive(Debug)]
 struct H3MMainTown {
-    generate_hero: bool,
-    kind: H3MTownKind,
+    generate_hero: bool, // AB/SoD
+    kind: H3MTownKind, // AB/SoD, TODO: check what this field means
     location: H3MLocation,
 }
 
-named!(eat_main_town<H3MMainTown>, do_parse!(
-    generate_hero: eat_flag >>
-    kind: eat_town_kind >>
+named_args!(eat_main_town(version: H3MVersion)<H3MMainTown>, do_parse!(
+    generate_hero: versions!(version, value!(true), call!(eat_flag), call!(eat_flag)) >>
+    kind: versions!(version, value!(H3MTownKind::Random), call!(eat_town_kind), call!(eat_town_kind)) >>
     location: eat_location >>
     (H3MMainTown {
         generate_hero, kind, location,
@@ -303,7 +325,7 @@ enum H3MVictoryCondition {
     BuildGrail(H3MLocation),
     DefeatHero(H3MLocation),
     CaptureTown(H3MLocation),
-    DefeatMoster(H3MLocation),
+    DefeatMonster(H3MLocation),
     FlagAllDwellings,
     FlagAllMines,
     TransportArtifact(H3MArtifact, H3MLocation),
@@ -318,7 +340,7 @@ named_args!(eat_victory(code: u8)<H3MVictoryCondition>, switch!(value!(code),
     0x04 => do_parse!(loc: eat_location >> (H3MVictoryCondition::BuildGrail(loc))) |
     0x05 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatHero(loc))) |
     0x06 => do_parse!(loc: eat_location >> (H3MVictoryCondition::CaptureTown(loc))) |
-    0x07 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatMoster(loc))) |
+    0x07 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatMonster(loc))) |
     0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
     0x09 => value!(H3MVictoryCondition::FlagAllMines) |
     0x0A => do_parse!(art: eat_artifact >> loc: eat_location >> (H3MVictoryCondition::TransportArtifact(art, loc)))
@@ -379,19 +401,34 @@ named!(eat_player_playability<H3MPlayerPlayability>, do_parse!(
 
 #[derive(Debug)]
 struct H3MPlayerAllowedAlignments {
-    customized: bool,
-    mask: u16,
+    unknown: bool, // SoD
+    mask: u8,
+    mask_ext: u8,
     random: bool,
 }
 
-named!(eat_player_allowed_alignments<H3MPlayerAllowedAlignments>, do_parse!(
-    customized: eat_flag >>
-    mask: eat_16 >>
-    random: eat_flag >>
-    (H3MPlayerAllowedAlignments {
-        customized, mask, random,
-    })
-));
+impl Default for H3MPlayerAllowedAlignments {
+    fn default() -> Self {
+        Self { unknown: false, mask: 0u8, mask_ext: 0u8, random: false }
+    }
+}
+
+named_args!(eat_player_allowed_alignments(version: H3MVersion, playable: bool)<H3MPlayerAllowedAlignments>,
+    switch!(value!(playable),
+        true => do_parse!(
+            unknown: versions!(version, value!(false), value!(false), call!(eat_flag)) >>
+            mask: eat_8 >>
+            mask_ext: versions!(version, value!(0u8), call!(eat_8), call!(eat_8)) >>
+            random: eat_flag >>
+            (H3MPlayerAllowedAlignments {
+                unknown, mask, mask_ext, random,
+            })
+        ) |
+        false => value!(H3MPlayerAllowedAlignments::default(), versions!(version, take!(2), take!(3), take!(4)))
+        // NOTE: if player is not playable, this contains junk, just eat it
+        // TODO: this number is 3 for RoE & AB
+    )
+);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -403,27 +440,26 @@ struct H3MPlayer {
     random_hero: bool,
     hero_type: u8,
     main_hero: Option<H3MHero>,
-    num_placeholders: u8,
-    heroes: Vec<H3MHero>,
+    num_placeholders: u8, // AB/SoD
+    heroes: Vec<H3MHero>, // AB/SoD
 }
 
-named!(eat_player<H3MPlayer>, do_parse!(
+named_args!(eat_player(version: H3MVersion)<H3MPlayer>, do_parse!(
     playability: eat_player_playability >>
-    allowed_alignments: switch!(value!(playability.human || playability.computer),
-        true => call!(eat_player_allowed_alignments) |
-        false => value!(H3MPlayerAllowedAlignments {
-            customized: false, mask: 0u16, random: false,
-        }, take!(4)) // NOTE: if player is not playable, this contains junk, just eat it
-    ) >>
-    main_town: eat_option!(eat_main_town) >>
+    allowed_alignments: call!(eat_player_allowed_alignments, version, playability.human || playability.computer) >>
+    main_town: eat_option!(call!(eat_main_town, version)) >>
     random_hero: eat_flag >>
     hero_type: eat_8 >>
     main_hero: switch!(value!(hero_type),
         0xFFu8 => value!(None) |
         _ => map!(eat_hero, |x| Some(x))
     ) >>
-    num_placeholders: eat_8 >>
-    heroes: length_count!(eat_32, eat_hero) >>
+    num_placeholders: versions!(version,
+        value!(0u8), call!(eat_8), call!(eat_8)
+    ) >>
+    heroes: versions!(version,
+        value!(Vec::default()), length_count!(eat_32, eat_hero), length_count!(eat_32, eat_hero)
+    ) >>
     (H3MPlayer {
         playability,
         allowed_alignments,
@@ -458,16 +494,18 @@ named!(eat_hero_availability<H3MHeroAvailability>, do_parse!(
 
 #[derive(Debug)]
 struct H3MAvailableHeroes {
-    mask: [u8; 20],
-    settings: Vec<H3MHeroAvailability>,
+    mask: [u8; 16],
+    mask_ext: [u8; 4], // AB/SoD
+    settings: Vec<H3MHeroAvailability>, // SoD
 }
 
-named!(eat_available_heroes<H3MAvailableHeroes>, do_parse!(
-    mask: count_fixed!(u8, eat_8, 20) >>
-    _zeroes: tag!([0u8; 4]) >>
-    settings: length_count!(eat_8, eat_hero_availability) >>
+named_args!(eat_available_heroes(version: H3MVersion)<H3MAvailableHeroes>, do_parse!(
+    mask: count_fixed!(u8, eat_8, 16) >>
+    mask_ext: versions!(version, value!([0u8; 4]), count_fixed!(u8, eat_8, 4), count_fixed!(u8, eat_8, 4)) >>
+    _zeroes: versions!(version, value!(()), value!((), tag!([0u8; 4])), value!((), tag!([0u8; 4]))) >>
+    settings: versions!(version, value!(Vec::default()), value!(Vec::default()), length_count!(eat_8, eat_hero_availability)) >>
     (H3MAvailableHeroes {
-        mask, settings,
+        mask, mask_ext, settings,
     })
 ));
 
@@ -768,8 +806,8 @@ struct H3MTownEvent {
     unknown: u32,
 }
 
-named!(eat_town_event<H3MTownEvent>, do_parse!(
-    event: eat_event >>
+named_args!(eat_town_event(version: H3MVersion)<H3MTownEvent>, do_parse!(
+    event: call!(eat_event, version) >>
     buildings: count_fixed!(u8, eat_8, 6) >>
     creatures: count_fixed!(u16, eat_16, 7) >>
     unknown: eat_32 >>
@@ -792,7 +830,7 @@ struct H3MObjectTown {
     alignment: u8,
 }
 
-named_args!(eat_obj_town(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_town(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
     owner: eat_color >>
     name: eat_option!(eat_string) >>
@@ -801,7 +839,7 @@ named_args!(eat_obj_town(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     buildings: eat_buildings >>
     forced_spells: eat_spells_mask >>
     allowed_spells: eat_spells_mask >>
-    events: length_count!(eat_32, eat_town_event) >>
+    events: length_count!(eat_32, call!(eat_town_event, version)) >>
     alignment: eat_8 >>
     _zeroes: tag!([0u8; 3]) >>
     (H3MObjectProperties::Town(H3MObjectTown{
@@ -829,7 +867,7 @@ struct H3MObjectHero {
     stats: Option<(u8, u8, u8, u8)>,
 }
 
-named_args!(eat_obj_hero(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_hero(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
     owner: eat_color >>
     hero_type: eat_8 >>
@@ -862,7 +900,7 @@ struct H3MObjectMonster {
     never_grow: bool,
 }
 
-named_args!(eat_obj_monster(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_monster(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     id: eat_32 >>
     quantity: eat_16 >>
     mood: eat_8 >>
@@ -875,7 +913,7 @@ named_args!(eat_obj_monster(class: H3MObjectClass)<H3MObjectProperties>, do_pars
     }))
 ));
 
-named_args!(eat_obj_placeholder(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_placeholder(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     id: eat_8 >>
     power_rating: switch!(value!(id == 0xFF),
@@ -887,7 +925,7 @@ named_args!(eat_obj_placeholder(class: H3MObjectClass)<H3MObjectProperties>, do_
     })
 ));
 
-named_args!(eat_obj_owned(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_owned(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     (H3MObjectProperties::OwnedObject { owner })
@@ -906,7 +944,7 @@ named!(eat_dwelling_faction<H3MDwellingFaction>,
        )
 );
 
-named_args!(eat_obj_dwelling(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_dwelling(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     faction: eat_dwelling_faction >>
@@ -914,21 +952,21 @@ named_args!(eat_obj_dwelling(class: H3MObjectClass)<H3MObjectProperties>, do_par
     (H3MObjectProperties::RandomDwelling { owner, faction, level_range })
 ));
 
-named_args!(eat_obj_dwelling_level(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_dwelling_level(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     faction: eat_dwelling_faction >>
     (H3MObjectProperties::RandomDwellingLevel { owner, faction  })
 ));
 
-named_args!(eat_obj_dwelling_faction(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_dwelling_faction(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     level_range: tuple!(eat_8, eat_8) >>
     (H3MObjectProperties::RandomDwellingFaction { owner, level_range })
 ));
 
-named_args!(eat_obj_resource(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_resource(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     guard: eat_option!(eat_msg_guards) >>
     amount: eat_32 >>
     _zeroes: tag!([0u8; 4]) >>
@@ -948,27 +986,27 @@ named!(eat_msg_guards<H3MMessageAndGuards>, do_parse!(
     (H3MMessageAndGuards { message, guards })
 ));
 
-named_args!(eat_obj_artifact(class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_artifact(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     map!(eat_option!(eat_msg_guards), |guard| H3MObjectProperties::Artifact { guard })
 );
 
-named_args!(eat_obj_witch(class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_witch(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     map!(eat_32, |skills| H3MObjectProperties::Witch { skills })
 );
 
-named_args!(eat_obj_shrine(class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_shrine(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     do_parse!(spell: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::Shrine { spell }))
 );
 
-named_args!(eat_obj_grail(class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_grail(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     map!(eat_32, |radius| H3MObjectProperties::Grail { radius })
 );
 
-named_args!(eat_obj_message(class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_message(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     do_parse!(text: eat_string >> _zeroes: tag!([0u8; 4]) >> (H3MObjectProperties::Message { text }))
 );
 
-named_args!(eat_obj_scholar(class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_scholar(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     do_parse!(
         bonus_type: eat_8 >>
         bonus_id: eat_8 >>
@@ -977,7 +1015,7 @@ named_args!(eat_obj_scholar(class: H3MObjectClass)<H3MObjectProperties>,
     )
 );
 
-named_args!(eat_obj_abandoned(class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_abandoned(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     do_parse!(resources: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::AbandonedMine { resources }))
 );
 
@@ -1002,13 +1040,13 @@ enum H3MObjectProperties {
     NoProperties,
 }
 
-named_args!(eat_obj_noprops(class: H3MObjectClass)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
+named_args!(eat_obj_noprops(v: H3MVersion, c: H3MObjectClass)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
 
-fn eat_obj_unimpl<'a>(_: &'a[u8], class: H3MObjectClass) -> nom::IResult<&'a[u8], H3MObjectProperties> {
+fn eat_obj_unimpl<'a>(_: &'a[u8], _: H3MVersion, class: H3MObjectClass) -> nom::IResult<&'a[u8], H3MObjectProperties> {
     panic!("class `{:?}` is not implemented yet", class)
 }
 
-h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
+h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
 // Objects without additional properties
              (4, Arena, eat_obj_noprops)
              (7, BlackMarket, eat_obj_noprops)
@@ -1158,13 +1196,13 @@ fn eat_obj_class_or_panic(inp: &[u8; 4]) -> H3MObjectClass {
     }
 }
 
-named_args!(eat_object<'a>(templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
+named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
     loc: eat_location >>
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
     class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class)) >>
     _debug: tap!(class: value!(class) => { println!("reading object of class {:?}", class) }) >>
-    properties: dbg_dmp!(call!(class.to_debug(), class)) >>
+    properties: dbg_dmp!(call!(class.to_debug(), version, class)) >>
     (H3MObject {
         loc, template_idx, properties
     })
@@ -1175,21 +1213,25 @@ struct H3MEvent {
     name: String,
     text: String,
     resources: H3MResources,
-    todo: [u8; 3],
+    unknown1: u8,
+    unknown2: bool, // SoD
+    unknown3: bool,
     first_occurence: u16,
     repeat_period: u16,
 }
 
-named!(eat_event<H3MEvent>, do_parse!(
+named_args!(eat_event(version: H3MVersion)<H3MEvent>, do_parse!(
     name: eat_string >>
     text: eat_string >>
     resources: eat_resources >>
-    todo: count_fixed!(u8, eat_8, 3) >>
+    unknown1: eat_8 >>
+    unknown2: versions!(version, value!(true), value!(true), call!(eat_flag)) >>
+    unknown3: eat_flag >>
     first_occurence: eat_16 >>
     repeat_period: eat_16 >>
-    zeroes: tag!([0u8; 16]) >>
+    _zeroes: tag!([0u8; 16]) >>
     (H3MEvent {
-        name, text, resources, todo, first_occurence, repeat_period
+        name, text, resources, unknown1, unknown2, unknown3, first_occurence, repeat_period
     })
 ));
 
@@ -1198,16 +1240,17 @@ named!(eat_event<H3MEvent>, do_parse!(
 #[derive(Debug)]
 struct H3MFile {
     header: H3MHeader,
-    players: [H3MPlayer; 8],
+    players: Vec<H3MPlayer>, // TODO: this always has 8 items
     victory: Option<H3MSpecialVictoryCondition>,
     loss: H3MLossCondition,
     teams: Option<[u8; 8]>,
     available_heroes: H3MAvailableHeroes,
-    banned_artifacts: [u8; 18],
-    banned_spells: H3MSpellsMask,
-    banned_skills: u32,
+    banned_artifacts: [u8; 17], // AB/SoD
+    banned_artifacts_ext: u8, // SoD
+    banned_spells: H3MSpellsMask, // SoD
+    banned_skills: u32, // SoD
     rumors: Vec<(String, String)>,
-    heroes: Vec<Option<H3MHeroCustomization>>, // TODO: this always has 156 items
+    heroes: Vec<Option<H3MHeroCustomization>>, // SoD // TODO: this always has 156 items
     land: H3MMap,
     underground: Option<H3MMap>,
     object_templates: Vec<H3MObjectTemplate>,
@@ -1217,40 +1260,37 @@ struct H3MFile {
 
 named_args!(eat_h3m<'a>(used_classes: &'a mut std::collections::BTreeSet<u32>)<H3MFile>, do_parse!(
     header: eat_header >>
-    p0: eat_player >> p1: eat_player >> p2: eat_player >> p3: eat_player >>
-    p4: eat_player >> p5: eat_player >> p6: eat_player >> p7: eat_player >>
+    players: count!(call!(eat_player, header.version), 8) >>
     victory: eat_special_victory >>
     loss: eat_loss >>
     teams: switch!(eat_8,
         0u8 => value!(None) |
         _ => map!(count_fixed!(u8, eat_8, 8), |x| Some(x))
     ) >>
-    available_heroes: eat_available_heroes >>
+    available_heroes: call!(eat_available_heroes, header.version) >>
     _zeroes: tag!([0u8; 31]) >>
-    banned_artifacts: count_fixed!(u8, eat_8, 18) >>
-    banned_spells: eat_spells_mask >>
-    banned_skills: eat_32 >>
+    banned_artifacts: versions!(header.version, value!([0u8; 17]), count_fixed!(u8, eat_8, 17), count_fixed!(u8, eat_8, 17)) >>
+    banned_artifacts_ext: versions!(header.version, value!(31u8), value!(31u8), call!(eat_8)) >>
+    banned_spells: versions!(header.version, value!(H3MSpellsMask::default()), value!(H3MSpellsMask::default()), call!(eat_spells_mask)) >>
+    banned_skills: versions!(header.version, value!(0u32), value!(0u32), call!(eat_32)) >>
     rumors: length_count!(eat_32, tuple!(eat_string, eat_string)) >>
-    heroes: count!(eat_option!(eat_hero_customization), 156) >>
+    heroes: count!(versions!(header.version, value!(None), value!(None), eat_option!(eat_hero_customization)), 156) >>
     land: count!(eat_tile, header.get_width() * header.get_height()) >>
     underground: switch!(value!(header.has_underground),
         false => value!(None) |
-        true => map!(count!(eat_tile, header.get_width() * header.get_height()), |x| Some(x))
+        true => map!(count!(eat_tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { tiles }))
     ) >>
     object_templates: tap!(
         ts: length_count!(eat_32, call!(eat_object_template, used_classes)) =>
         { println!("used classes: {:?}", used_classes) }
     ) >>
-    objects: length_count!(map!(eat_32, |n| n), call!(eat_object, &object_templates)) >>
-    events: length_count!(eat_32, eat_event) >>
+    objects: length_count!(eat_32, call!(eat_object, header.version, &object_templates)) >>
+    events: length_count!(eat_32, call!(eat_event, header.version)) >>
     _trailing_zeroes: count!(tag!([0u8]), 124) >>
     (H3MFile {
-        header,
-        players: [p0, p1, p2, p3, p4, p5, p6, p7],
-        victory, loss, teams, available_heroes,
-        banned_artifacts, banned_spells, banned_skills, rumors, heroes,
-        land: H3MMap { tiles: land },
-        underground: underground.map(|tiles| H3MMap { tiles }),
+        header, players, victory, loss, teams, available_heroes,
+        banned_artifacts, banned_artifacts_ext, banned_spells, banned_skills, rumors, heroes,
+        land: H3MMap { tiles: land }, underground,
         object_templates, objects, events
     })
 ));

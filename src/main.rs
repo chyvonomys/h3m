@@ -233,7 +233,7 @@ named!(eat_artifact<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i)));
 #[derive(Debug)]
 struct H3MArtifact2(u16);
 
-named!(eat_artifact2<H3MArtifact2>, map!(eat_16, |i| H3MArtifact2(i))); 
+named!(eat_artifact2<H3MArtifact2>, map!(eat_16, |i| H3MArtifact2(i)));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -338,7 +338,7 @@ named!(eat_loss<H3MLossCondition>, switch!(eat_8,
     0xFF => value!(H3MLossCondition::None) |
     0x00 => do_parse!(l: eat_location >> (H3MLossCondition::LoseTown(l))) |
     0x01 => do_parse!(l: eat_location >> (H3MLossCondition::LoseHero(l))) |
-    0x02 => do_parse!(d: eat_16 >> (H3MLossCondition::TimeExpires(d))) 
+    0x02 => do_parse!(d: eat_16 >> (H3MLossCondition::TimeExpires(d)))
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -697,7 +697,7 @@ named!(eat_tile<H3MTile>, do_parse!(
         flip_river_y: mirror & 4 == 4,
         flip_river_x: mirror & 8 == 8,
         flip_road_y: mirror & 16 == 16,
-        flip_road_x: mirror & 32 == 32 
+        flip_road_x: mirror & 32 == 32
     })
 ));
 
@@ -887,12 +887,118 @@ named_args!(eat_obj_placeholder(class: H3MObjectClass)<H3MObjectProperties>, do_
     })
 ));
 
+named_args!(eat_obj_owned(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+    owner: eat_color >>
+    _zeroes: tag!([0u8; 3]) >>
+    (H3MObjectProperties::OwnedObject { owner })
+));
+
+#[derive(Debug)]
+enum H3MDwellingFaction {
+    SameAsTown(u32),
+    Mask(u16),
+}
+
+named!(eat_dwelling_faction<H3MDwellingFaction>,
+       switch!(peek!(eat_32),
+               0 => do_parse!(z: eat_32 >> m: eat_16 >> (H3MDwellingFaction::Mask(m))) |
+               _ => map!(eat_32, |t| H3MDwellingFaction::SameAsTown(t))
+       )
+);
+
+named_args!(eat_obj_dwelling(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+    owner: eat_color >>
+    _zeroes: tag!([0u8; 3]) >>
+    faction: eat_dwelling_faction >>
+    level_range: tuple!(eat_8, eat_8) >>
+    (H3MObjectProperties::RandomDwelling { owner, faction, level_range })
+));
+
+named_args!(eat_obj_dwelling_level(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+    owner: eat_color >>
+    _zeroes: tag!([0u8; 3]) >>
+    faction: eat_dwelling_faction >>
+    (H3MObjectProperties::RandomDwellingLevel { owner, faction  })
+));
+
+named_args!(eat_obj_dwelling_faction(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+    owner: eat_color >>
+    _zeroes: tag!([0u8; 3]) >>
+    level_range: tuple!(eat_8, eat_8) >>
+    (H3MObjectProperties::RandomDwellingFaction { owner, level_range })
+));
+
+named_args!(eat_obj_resource(class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+    guard: eat_option!(eat_msg_guards) >>
+    amount: eat_32 >>
+    _zeroes: tag!([0u8; 4]) >>
+    (H3MObjectProperties::Resource { guard, amount })
+));
+
+#[derive(Debug)]
+struct H3MMessageAndGuards {
+    message: String,
+    guards: Option<[u16; 7]>,
+}
+
+named!(eat_msg_guards<H3MMessageAndGuards>, do_parse!(
+    message: eat_string >>
+    guards: eat_option!(count_fixed!(u16, eat_16, 7)) >>
+    _zeroes: tag!([0u8; 4]) >>
+    (H3MMessageAndGuards { message, guards })
+));
+
+named_args!(eat_obj_artifact(class: H3MObjectClass)<H3MObjectProperties>,
+    map!(eat_option!(eat_msg_guards), |guard| H3MObjectProperties::Artifact { guard })
+);
+
+named_args!(eat_obj_witch(class: H3MObjectClass)<H3MObjectProperties>,
+    map!(eat_32, |skills| H3MObjectProperties::Witch { skills })
+);
+
+named_args!(eat_obj_shrine(class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(spell: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::Shrine { spell }))
+);
+
+named_args!(eat_obj_grail(class: H3MObjectClass)<H3MObjectProperties>,
+    map!(eat_32, |radius| H3MObjectProperties::Grail { radius })
+);
+
+named_args!(eat_obj_message(class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(text: eat_string >> _zeroes: tag!([0u8; 4]) >> (H3MObjectProperties::Message { text }))
+);
+
+named_args!(eat_obj_scholar(class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(
+        bonus_type: eat_8 >>
+        bonus_id: eat_8 >>
+        _zeroes: tag!([0u8; 6]) >>
+        (H3MObjectProperties::Scholar { bonus_type, bonus_id })
+    )
+);
+
+named_args!(eat_obj_abandoned(class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(resources: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::AbandonedMine { resources }))
+);
+
 #[derive(Debug)]
 enum H3MObjectProperties {
     Hero(H3MObjectHero),
     Monster(H3MObjectMonster),
     Town(H3MObjectTown),
     HeroPlaceholder { owner: H3MColor, id: u8, power_rating: Option<u8> },
+    OwnedObject { owner: H3MColor },
+    RandomDwelling { owner: H3MColor, faction: H3MDwellingFaction, level_range: (u8, u8) },
+    RandomDwellingLevel { owner: H3MColor, faction: H3MDwellingFaction },
+    RandomDwellingFaction { owner: H3MColor, level_range: (u8, u8) },
+    Resource { guard: Option<H3MMessageAndGuards>, amount: u32 },
+    Artifact { guard: Option<H3MMessageAndGuards> },
+    Witch { skills: u32 },
+    Shrine { spell: u8 },
+    Grail { radius: u32 },
+    Message { text: String },
+    Scholar { bonus_type: u8, bonus_id: u8 },
+    AbandonedMine { resources: u8 },
     NoProperties,
 }
 
@@ -903,27 +1009,129 @@ fn eat_obj_unimpl<'a>(_: &'a[u8], class: H3MObjectClass) -> nom::IResult<&'a[u8]
 }
 
 h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
-    (34, Hero, eat_obj_hero)
-    (43, MonolithEntrance, eat_obj_unimpl)
-    (44, MonolithExit, eat_obj_unimpl)
-    (45, MonolithTwoWay, eat_obj_unimpl)
-    (53, Mine, eat_obj_unimpl)
-    (54, Monster, eat_obj_monster)
-    (70, RandomHero, eat_obj_hero)
-    (71, RandomMonster, eat_obj_monster)
-    (77, RandomTown, eat_obj_town)
-    (98, Town, eat_obj_town)
-    (103, SubterraneanGate, eat_obj_noprops)
-    (119, DeadVegetation, eat_obj_unimpl)
-    (124, Hole, eat_obj_unimpl)
-    (134, Mountain, eat_obj_noprops)
-    (143, RiverDelta, eat_obj_noprops)
-    (206, DesertHills, eat_obj_noprops)
-    (207, DirtHills, eat_obj_noprops)
-    (208, GrassHills, eat_obj_noprops)
-    (209, RoughHills, eat_obj_noprops)
-    (210, SubterraneanRocks, eat_obj_noprops)
-    (214, HeroPlaceholder, eat_obj_placeholder)
+// Objects without additional properties
+             (4, Arena, eat_obj_noprops)
+             (7, BlackMarket, eat_obj_noprops)
+             (9, BorderGuard, eat_obj_noprops)
+             (10, KeymastersTent, eat_obj_noprops)
+             (12, Campfire, eat_obj_noprops)
+             (14, SwanPond, eat_obj_noprops)
+             (16, CreatureBank, eat_obj_noprops)
+             (22, Corpse, eat_obj_noprops)
+             (23, MarlettoTower, eat_obj_noprops)
+             (25, DragonUtopia, eat_obj_noprops)
+             (30, FountainOfFortune, eat_obj_noprops)
+             (31, FountainOfYouth, eat_obj_noprops)
+             (32, GardenOfRevelation, eat_obj_noprops)
+             (38, IdolOfFortune, eat_obj_noprops)
+             (43, MonolithEntrance, eat_obj_noprops)
+             (44, MonolithExit, eat_obj_noprops)
+             (45, MonolithTwoWay, eat_obj_noprops)
+             (47, SchoolOfMagic, eat_obj_noprops)
+             (48, MagicSpring, eat_obj_noprops)
+             (49, MagicWell, eat_obj_noprops)
+             (51, MercenaryCamp, eat_obj_noprops)
+             (56, Oasis, eat_obj_noprops)
+             (57, Obelisk, eat_obj_noprops)
+             (60, PillarOfFire, eat_obj_noprops)
+             (61, StarAxis, eat_obj_noprops)
+             (64, RallyFlag, eat_obj_noprops)
+             (96, Temple, eat_obj_noprops)
+             (97, DenOfThieves, eat_obj_noprops)
+             (100, LearningStone, eat_obj_noprops)
+             (101, TreasureChest, eat_obj_noprops)
+             (102, TreeOfKnowledge, eat_obj_noprops)
+             (103, SubterraneanGate, eat_obj_noprops)
+             (105, Wagon, eat_obj_noprops)
+             (107, SchoolOfWar, eat_obj_noprops)
+             (109, WaterWheel, eat_obj_noprops)
+             (110, WateringHole, eat_obj_noprops)
+             (112, Windmill, eat_obj_noprops)
+             (116, Cactus, eat_obj_noprops)
+             (117, Canyon, eat_obj_noprops)
+             (118, Crater, eat_obj_noprops)
+             (119, DeadVegetation, eat_obj_noprops)
+             (120, Flowers, eat_obj_noprops)
+             (124, Hole, eat_obj_noprops)
+             (126, Lake, eat_obj_noprops)
+             (127, LavaFlow, eat_obj_noprops)
+             (128, LavaLake, eat_obj_noprops)
+             (129, Mushrooms, eat_obj_noprops)
+             (130, Log, eat_obj_noprops)
+             (131, Mandrake, eat_obj_noprops)
+             (132, Moss, eat_obj_noprops)
+             (133, Mound, eat_obj_noprops)
+             (134, Mountain, eat_obj_noprops)
+             (135, OakTrees, eat_obj_noprops)
+             (136, Outcropping, eat_obj_noprops)
+             (137, PineTrees, eat_obj_noprops)
+             (143, RiverDelta, eat_obj_noprops)
+             (147, Rock, eat_obj_noprops)
+             (148, SandDune, eat_obj_noprops)
+             (150, Shrub, eat_obj_noprops)
+             (151, Skull, eat_obj_noprops)
+             (153, Stump, eat_obj_noprops)
+             (155, Trees, eat_obj_noprops)
+             (177, Lake2, eat_obj_noprops)
+             (199, Trees2, eat_obj_noprops)
+             (206, DesertHills, eat_obj_noprops)
+             (207, DirtHills, eat_obj_noprops)
+             (208, GrassHills, eat_obj_noprops)
+             (209, RoughHills, eat_obj_noprops)
+             (210, SubterraneanRocks, eat_obj_noprops)
+             (211, SwampFoliage, eat_obj_noprops)
+             (212, BorderGate, eat_obj_noprops)
+
+// Objects with additional properties:
+             (5, Artifact, eat_obj_artifact)
+             (6, PandorasBox, eat_obj_unimpl)
+             (17, CreatureGenerator1, eat_obj_owned)
+             (18, CreatureGenerator2, eat_obj_owned)
+             (19, CreatureGenerator3, eat_obj_owned)
+             (20, CreatureGenerator4, eat_obj_owned)
+             (26, Event, eat_obj_unimpl)
+             (33, Garrison, eat_obj_unimpl)
+             (34, Hero, eat_obj_hero)
+             (36, Grail, eat_obj_grail)
+             (42, Lighthouse, eat_obj_unimpl)
+             (53, Mine, eat_obj_owned)
+             (54, Monster, eat_obj_monster)
+             (59, OceanBottle, eat_obj_message)
+             (62, Prison, eat_obj_unimpl)
+             (65, RandomArtifact, eat_obj_unimpl)
+             (66, RandomTreasureArtifact, eat_obj_artifact)
+             (67, RandomMinorArtifact, eat_obj_artifact)
+             (68, RandomMajorArtifact, eat_obj_artifact)
+             (69, RandomRelicArtifact, eat_obj_artifact)
+             (70, RandomHero, eat_obj_hero)
+             (71, RandomMonster, eat_obj_monster)
+             (72, RandomMonster1, eat_obj_monster)
+             (73, RandomMonster2, eat_obj_monster)
+             (74, RandomMonster3, eat_obj_monster)
+             (75, RandomMonster4, eat_obj_monster)
+             (76, RandomResource, eat_obj_resource)
+             (77, RandomTown, eat_obj_town)
+             (79, Resource, eat_obj_resource)
+             (81, Scholar, eat_obj_scholar)
+             (83, SeerHut, eat_obj_unimpl)
+             (87, Shipyard, eat_obj_unimpl)
+             (88, ShrineOfMagicIncantation, eat_obj_shrine)
+             (89, ShrineOfMagicGesture, eat_obj_shrine)
+             (90, ShrineOfMagicThought, eat_obj_shrine)
+             (91, Sign, eat_obj_message)
+             (93, SpellScroll, eat_obj_unimpl)
+             (98, Town, eat_obj_town)
+             (113, WitchHut, eat_obj_witch)
+             (162, RandomMonster5, eat_obj_monster)
+             (163, RandomMonster6, eat_obj_monster)
+             (164, RandomMonster7, eat_obj_monster)
+             (214, HeroPlaceholder, eat_obj_placeholder)
+             (215, QuestGuard, eat_obj_unimpl)
+             (216, RandomDwelling, eat_obj_dwelling)
+             (217, RandomDwellingLevel, eat_obj_dwelling_level)
+             (218, RandomDwellingFaction, eat_obj_dwelling_faction)
+             (219, Garrison2, eat_obj_unimpl)
+             (220, AbandonedMine, eat_obj_abandoned)
 }
 
 impl Clone for H3MObjectClass {
@@ -955,7 +1163,8 @@ named_args!(eat_object<'a>(templates: &'a[H3MObjectTemplate])<H3MObject>, do_par
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
     class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class)) >>
-    properties: call!(class.to_debug(), class) >>
+    _debug: tap!(class: value!(class) => { println!("reading object of class {:?}", class) }) >>
+    properties: dbg_dmp!(call!(class.to_debug(), class)) >>
     (H3MObject {
         loc, template_idx, properties
     })

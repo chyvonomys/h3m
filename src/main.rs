@@ -287,10 +287,12 @@ h3m_enum! { <H3MCastleLevel, eat_castle_level, eat_8>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct H3MCreature(u16);
 
-named!(eat_creature<H3MCreature>, map!(eat_16, |i| H3MCreature(i)));
+named_args!(eat_creature(version: H3MVersion)<H3MCreature>,
+    map!(versions!(version, map!(eat_8, |x| x as u16), call!(eat_16), call!(eat_16)), |i| H3MCreature(i))
+);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -301,14 +303,14 @@ struct H3MSpecialVictoryCondition {
     cpu_allowed: bool,
 }
 
-named!(eat_special_victory<Option<H3MSpecialVictoryCondition>>,
+named_args!(eat_special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondition>>,
        switch!(peek!(eat_8),
                0xFF => value!(None, eat_8) |
                _ => do_parse!(
                        code: eat_8 >>
                        or_default: eat_flag >>
                        cpu_allowed: eat_flag >>
-                       condition: call!(eat_victory, code) >>
+                       condition: call!(eat_victory, version, code) >>
                        (Some(H3MSpecialVictoryCondition {
                            condition, or_default, cpu_allowed
                        }))
@@ -331,19 +333,21 @@ enum H3MVictoryCondition {
     TransportArtifact(H3MArtifact, H3MLocation),
 }
 
-named_args!(eat_victory(code: u8)<H3MVictoryCondition>, switch!(value!(code),
-    0x00 => do_parse!(art: eat_artifact >> (H3MVictoryCondition::AcquireArtifact(art))) |
-    0x01 => do_parse!(cr: eat_creature >> amount: eat_32 >> (H3MVictoryCondition::AccumCreatures(cr, amount))) |
-    0x02 => do_parse!(res: eat_resource >> amount: eat_32 >> (H3MVictoryCondition::AccumResources(res, amount))) |
+named_args!(eat_victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, switch!(value!(code),
+    0x00 => map!(eat_artifact, |art| H3MVictoryCondition::AcquireArtifact(art)) |
+    0x01 => do_parse!(cr: call!(eat_creature, version) >> amount: eat_32 >>
+                      (H3MVictoryCondition::AccumCreatures(cr, amount))) |
+    0x02 => do_parse!(res: eat_resource >> amount: eat_32 >>
+                      (H3MVictoryCondition::AccumResources(res, amount))) |
     0x03 => do_parse!(loc: eat_location >> hall: eat_hall_level >> castle: eat_castle_level >>
                       (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
-    0x04 => do_parse!(loc: eat_location >> (H3MVictoryCondition::BuildGrail(loc))) |
-    0x05 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatHero(loc))) |
-    0x06 => do_parse!(loc: eat_location >> (H3MVictoryCondition::CaptureTown(loc))) |
-    0x07 => do_parse!(loc: eat_location >> (H3MVictoryCondition::DefeatMonster(loc))) |
+    0x04 => map!(eat_location, |loc| H3MVictoryCondition::BuildGrail(loc)) |
+    0x05 => map!(eat_location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
+    0x06 => map!(eat_location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
+    0x07 => map!(eat_location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
     0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
     0x09 => value!(H3MVictoryCondition::FlagAllMines) |
-    0x0A => do_parse!(art: eat_artifact >> loc: eat_location >> (H3MVictoryCondition::TransportArtifact(art, loc)))
+    0x0A => map!(tuple!(eat_artifact, eat_location), |p| H3MVictoryCondition::TransportArtifact(p.0, p.1))
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -821,7 +825,7 @@ struct H3MObjectTown {
     id: u32,
     owner: H3MColor,
     name: Option<String>,
-    garrison: Option<Vec<(H3MCreature, u16)>>, // TODO: always 7 slots
+    garrison: Option<H3MCreatures>,
     group_formation: bool,
     buildings: H3MBuildings,
     forced_spells: H3MSpellsMask,
@@ -834,7 +838,7 @@ named_args!(eat_obj_town(version: H3MVersion, class: H3MObjectClass)<H3MObjectPr
     id: eat_32 >>
     owner: eat_color >>
     name: eat_option!(eat_string) >>
-    garrison: eat_option!(count!(tuple!(eat_creature, eat_16), 7)) >>
+    garrison: eat_option!(call!(eat_creatures, version)) >>
     group_formation: eat_flag >>
     buildings: eat_buildings >>
     forced_spells: eat_spells_mask >>
@@ -857,7 +861,7 @@ struct H3MObjectHero {
     exp: Option<u32>,
     face: Option<u8>,
     skills: Option<Vec<(u8, H3MSkillLevel)>>,
-    garrison: Option<Vec<(H3MCreature, u16)>>, // TODO: always 7 slots
+    garrison: Option<H3MCreatures>,
     group_formation: bool,
     equipment: Option<H3MHeroEquipment>,
     patrol_radius: u8,
@@ -875,7 +879,7 @@ named_args!(eat_obj_hero(version: H3MVersion, class: H3MObjectClass)<H3MObjectPr
     exp: eat_option!(eat_32) >>
     face: eat_option!(eat_8) >>
     skills: eat_option!(length_count!(eat_32, tuple!(eat_8, eat_skill_level))) >>
-    garrison: eat_option!(count!(tuple!(eat_creature, eat_16), 7)) >>
+    garrison: eat_option!(call!(eat_creatures, version)) >>
     group_formation: eat_flag >>
     equipment: eat_option!(eat_hero_equipment) >>
     patrol_radius: eat_8 >>
@@ -925,7 +929,7 @@ named_args!(eat_obj_placeholder(version: H3MVersion, class: H3MObjectClass)<H3MO
     })
 ));
 
-named_args!(eat_obj_owned(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_owned(_version: H3MVersion, _class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     (H3MObjectProperties::OwnedObject { owner })
@@ -967,7 +971,7 @@ named_args!(eat_obj_dwelling_faction(version: H3MVersion, class: H3MObjectClass)
 ));
 
 named_args!(eat_obj_resource(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
-    guard: eat_option!(eat_msg_guards) >>
+    guard: eat_option!(call!(eat_msg_guards, version)) >>
     amount: eat_32 >>
     _zeroes: tag!([0u8; 4]) >>
     (H3MObjectProperties::Resource { guard, amount })
@@ -976,18 +980,25 @@ named_args!(eat_obj_resource(version: H3MVersion, class: H3MObjectClass)<H3MObje
 #[derive(Debug)]
 struct H3MMessageAndGuards {
     message: String,
-    guards: Option<[u16; 7]>,
+    guards: Option<H3MCreatures>,
 }
 
-named!(eat_msg_guards<H3MMessageAndGuards>, do_parse!(
+named_args!(eat_msg_guards(version: H3MVersion)<H3MMessageAndGuards>, do_parse!(
     message: eat_string >>
-    guards: eat_option!(count_fixed!(u16, eat_16, 7)) >>
+    guards: eat_option!(call!(eat_creatures, version)) >>
     _zeroes: tag!([0u8; 4]) >>
     (H3MMessageAndGuards { message, guards })
 ));
 
+#[derive(Debug)]
+struct H3MCreatures([(H3MCreature, u16); 7]);
+
+named_args!(eat_creatures(version: H3MVersion)<H3MCreatures>,
+    map!(count_fixed!((H3MCreature, u16), tuple!(call!(eat_creature, version), eat_16), 7), |cs| H3MCreatures(cs))
+);
+
 named_args!(eat_obj_artifact(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
-    map!(eat_option!(eat_msg_guards), |guard| H3MObjectProperties::Artifact { guard })
+    map!(eat_option!(call!(eat_msg_guards, version)), |guard| H3MObjectProperties::Artifact { guard })
 );
 
 named_args!(eat_obj_witch(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
@@ -1019,6 +1030,19 @@ named_args!(eat_obj_abandoned(version: H3MVersion, class: H3MObjectClass)<H3MObj
     do_parse!(resources: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::AbandonedMine { resources }))
 );
 
+named_args!(eat_obj_garrison(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(
+        owner: dbg!(eat_color) >>
+        _zeroes1: dbg!(tag!([0u8; 3])) >>
+        creatures: dbg!(call!(eat_creatures, version)) >>
+        removable: dbg!(versions!(version, value!(0u8), call!(eat_8), call!(eat_8))) >> // TODO: bool?
+        _zeroes2: dbg!(tag!([0u8; 8])) >>
+        (H3MObjectProperties::Garrison {
+            owner, creatures, removable
+        })
+    )
+);
+
 #[derive(Debug)]
 enum H3MObjectProperties {
     Hero(H3MObjectHero),
@@ -1037,6 +1061,7 @@ enum H3MObjectProperties {
     Message { text: String },
     Scholar { bonus_type: u8, bonus_id: u8 },
     AbandonedMine { resources: u8 },
+    Garrison { owner: H3MColor, creatures: H3MCreatures, removable: u8 },
     NoProperties,
 }
 
@@ -1048,16 +1073,24 @@ fn eat_obj_unimpl<'a>(_: &'a[u8], _: H3MVersion, class: H3MObjectClass) -> nom::
 
 h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
 // Objects without additional properties
+             (2, AltarOfSacrifice, eat_obj_noprops)
              (4, Arena, eat_obj_noprops)
              (7, BlackMarket, eat_obj_noprops)
              (9, BorderGuard, eat_obj_noprops)
              (10, KeymastersTent, eat_obj_noprops)
+             (11, Buoy, eat_obj_noprops)
              (12, Campfire, eat_obj_noprops)
+             (13, Cartographer, eat_obj_noprops)
              (14, SwanPond, eat_obj_noprops)
              (16, CreatureBank, eat_obj_noprops)
+             (21, CursedGround1, eat_obj_noprops)
              (22, Corpse, eat_obj_noprops)
              (23, MarlettoTower, eat_obj_noprops)
+             (24, DerelictShip, eat_obj_noprops)
              (25, DragonUtopia, eat_obj_noprops)
+             (27, EyeOfMagi, eat_obj_noprops)
+             (28, FaerieRing, eat_obj_noprops)
+             (29, Flotsam, eat_obj_noprops)
              (30, FountainOfFortune, eat_obj_noprops)
              (31, FountainOfYouth, eat_obj_noprops)
              (32, GardenOfRevelation, eat_obj_noprops)
@@ -1071,9 +1104,12 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (51, MercenaryCamp, eat_obj_noprops)
              (56, Oasis, eat_obj_noprops)
              (57, Obelisk, eat_obj_noprops)
+             (58, RedwoodObservatory, eat_obj_noprops)
              (60, PillarOfFire, eat_obj_noprops)
              (61, StarAxis, eat_obj_noprops)
              (64, RallyFlag, eat_obj_noprops)
+             (85, Shipwreck, eat_obj_noprops)
+             (86, ShipwreckSurvivor, eat_obj_noprops)
              (96, Temple, eat_obj_noprops)
              (97, DenOfThieves, eat_obj_noprops)
              (100, LearningStone, eat_obj_noprops)
@@ -1084,12 +1120,14 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (107, SchoolOfWar, eat_obj_noprops)
              (109, WaterWheel, eat_obj_noprops)
              (110, WateringHole, eat_obj_noprops)
+             (111, Whirlpool, eat_obj_noprops)
              (112, Windmill, eat_obj_noprops)
              (116, Cactus, eat_obj_noprops)
              (117, Canyon, eat_obj_noprops)
              (118, Crater, eat_obj_noprops)
              (119, DeadVegetation, eat_obj_noprops)
              (120, Flowers, eat_obj_noprops)
+             (121, FrozenLake, eat_obj_noprops)
              (124, Hole, eat_obj_noprops)
              (126, Lake, eat_obj_noprops)
              (127, LavaFlow, eat_obj_noprops)
@@ -1110,6 +1148,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (151, Skull, eat_obj_noprops)
              (153, Stump, eat_obj_noprops)
              (155, Trees, eat_obj_noprops)
+             (158, Volcano, eat_obj_noprops)
              (177, Lake2, eat_obj_noprops)
              (199, Trees2, eat_obj_noprops)
              (206, DesertHills, eat_obj_noprops)
@@ -1128,7 +1167,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (19, CreatureGenerator3, eat_obj_owned)
              (20, CreatureGenerator4, eat_obj_owned)
              (26, Event, eat_obj_unimpl)
-             (33, Garrison, eat_obj_unimpl)
+             (33, Garrison, eat_obj_garrison)
              (34, Hero, eat_obj_hero)
              (36, Grail, eat_obj_grail)
              (42, Lighthouse, eat_obj_unimpl)
@@ -1152,7 +1191,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (79, Resource, eat_obj_resource)
              (81, Scholar, eat_obj_scholar)
              (83, SeerHut, eat_obj_unimpl)
-             (87, Shipyard, eat_obj_unimpl)
+             (87, Shipyard, eat_obj_owned)
              (88, ShrineOfMagicIncantation, eat_obj_shrine)
              (89, ShrineOfMagicGesture, eat_obj_shrine)
              (90, ShrineOfMagicThought, eat_obj_shrine)
@@ -1168,7 +1207,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (216, RandomDwelling, eat_obj_dwelling)
              (217, RandomDwellingLevel, eat_obj_dwelling_level)
              (218, RandomDwellingFaction, eat_obj_dwelling_faction)
-             (219, Garrison2, eat_obj_unimpl)
+             (219, Garrison2, eat_obj_garrison)
              (220, AbandonedMine, eat_obj_abandoned)
 }
 
@@ -1202,7 +1241,7 @@ named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate
     _zeroes: tag!([0u8; 5]) >>
     class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class)) >>
     _debug: tap!(class: value!(class) => { println!("reading object of class {:?}", class) }) >>
-    properties: dbg_dmp!(call!(class.to_debug(), version, class)) >>
+    properties: call!(class.to_debug(), version, class) >>
     (H3MObject {
         loc, template_idx, properties
     })
@@ -1261,7 +1300,7 @@ struct H3MFile {
 named_args!(eat_h3m<'a>(used_classes: &'a mut std::collections::BTreeSet<u32>)<H3MFile>, do_parse!(
     header: eat_header >>
     players: count!(call!(eat_player, header.version), 8) >>
-    victory: eat_special_victory >>
+    victory: call!(eat_special_victory, header.version) >>
     loss: eat_loss >>
     teams: switch!(eat_8,
         0u8 => value!(None) |

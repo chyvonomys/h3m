@@ -248,14 +248,14 @@ impl std::fmt::Debug for H3MResources {
 }
 
 #[derive(Debug)]
-struct H3MArtifact(u8);
+struct H3MArtifact(u16);
 
-named!(eat_artifact<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i)));
+named!(eat_artifact1<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i as u16)));
+named!(eat_artifact2<H3MArtifact>, map!(eat_16, |i| H3MArtifact(i)));
 
-#[derive(Debug)]
-struct H3MArtifact2(u16);
-
-named!(eat_artifact2<H3MArtifact2>, map!(eat_16, |i| H3MArtifact2(i)));
+named_args!(eat_artifact(version: H3MVersion)<H3MArtifact>,
+    versions!(version, call!(eat_artifact1), call!(eat_artifact2), call!(eat_artifact2))
+);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -333,11 +333,11 @@ enum H3MVictoryCondition {
     DefeatMonster(H3MLocation),
     FlagAllDwellings,
     FlagAllMines,
-    TransportArtifact(H3MArtifact, H3MLocation),
+    TransportArtifact(H3MArtifact, H3MLocation), // NOTE: all versions artifact v1 here
 }
 
 named_args!(eat_victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, switch!(value!(code),
-    0x00 => map!(eat_artifact, |art| H3MVictoryCondition::AcquireArtifact(art)) |
+    0x00 => map!(call!(eat_artifact, version), |art| H3MVictoryCondition::AcquireArtifact(art)) |
     0x01 => do_parse!(cr: call!(eat_creature, version) >> amount: eat_32 >>
                       (H3MVictoryCondition::AccumCreatures(cr, amount))) |
     0x02 => do_parse!(res: eat_resource >> amount: eat_32 >>
@@ -350,7 +350,7 @@ named_args!(eat_victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, swi
     0x07 => map!(eat_location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
     0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
     0x09 => value!(H3MVictoryCondition::FlagAllMines) |
-    0x0A => map!(tuple!(eat_artifact, eat_location), |p| H3MVictoryCondition::TransportArtifact(p.0, p.1))
+    0x0A => map!(tuple!(eat_artifact1, eat_location), |p| H3MVictoryCondition::TransportArtifact(p.0, p.1))
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -544,56 +544,55 @@ h3m_enum! { <H3MColor, eat_color, eat_8>
 
 #[derive(Debug)]
 struct H3MHeroEquipment {
-    head: u16,
-    shoulders: u16,
-    neck: u16,
-    rhand: u16,
-    lhand: u16,
-    torso: u16,
-    rring: u16,
-    lring: u16,
-    feet: u16,
-    misc1: u16,
-    misc2: u16,
-    misc3: u16,
-    misc4: u16,
-    machine1: u16,
-    machine2: u16,
-    machine3: u16,
-    machine4: u16,
-    spellbook: u16,
-    misc5: u16, // SoD
-    backpack: Vec<u16>,
+    head: H3MArtifact,
+    shoulders: H3MArtifact,
+    neck: H3MArtifact,
+    rhand: H3MArtifact,
+    lhand: H3MArtifact,
+    torso: H3MArtifact,
+    rring: H3MArtifact,
+    lring: H3MArtifact,
+    feet: H3MArtifact,
+    misc1: H3MArtifact,
+    misc2: H3MArtifact,
+    misc3: H3MArtifact,
+    misc4: H3MArtifact,
+    machine1: H3MArtifact,
+    machine2: H3MArtifact,
+    machine3: H3MArtifact,
+    machine4: H3MArtifact,
+    spellbook: H3MArtifact,
+    misc5: H3MArtifact, // SoD
+    backpack: Vec<H3MArtifact>,
 }
 
 named_args!(eat_hero_equipment(version: H3MVersion)<H3MHeroEquipment>, do_parse!(
-    head: eat_16 >>
-    shoulders: eat_16 >>
-    neck: eat_16 >>
-    rhand: eat_16 >>
-    lhand: eat_16 >>
-    torso: eat_16 >>
-    rring: eat_16 >>
-    lring: eat_16 >>
-    feet: eat_16 >>
-    misc1: eat_16 >>
-    misc2: eat_16 >>
-    misc3: eat_16 >>
-    misc4: eat_16 >>
-    machine1: eat_16 >>
-    machine2: eat_16 >>
-    machine3: eat_16 >>
-    machine4: eat_16 >>
-    spellbook: eat_16 >>
-    misc5: versions!(version, value!(0xFFFF), value!(0xFFFF), call!(eat_16)) >>
-    backpack: length_count!(eat_16, eat_16) >>
+    head: call!(eat_artifact, version) >>
+    shoulders: call!(eat_artifact, version) >>
+    neck: call!(eat_artifact, version) >>
+    rhand: call!(eat_artifact, version) >>
+    lhand: call!(eat_artifact, version) >>
+    torso: call!(eat_artifact, version) >>
+    rring: call!(eat_artifact, version) >>
+    lring: call!(eat_artifact, version) >>
+    feet: call!(eat_artifact, version) >>
+    misc1: call!(eat_artifact, version) >>
+    misc2: call!(eat_artifact, version) >>
+    misc3: call!(eat_artifact, version) >>
+    misc4: call!(eat_artifact, version) >>
+    machine1: call!(eat_artifact, version) >>
+    machine2: call!(eat_artifact, version) >>
+    machine3: call!(eat_artifact, version) >>
+    machine4: call!(eat_artifact, version) >>
+    spellbook: call!(eat_artifact, version) >>
+    misc5: versions!(version, value!(H3MArtifact(0xFFFF)), value!(H3MArtifact(0xFFFF)), call!(eat_artifact2)) >>
+    backpack: length_count!(eat_16, call!(eat_artifact, version)) >>
     (H3MHeroEquipment {
         head, shoulders, neck,
         rhand, lhand, torso, rring, lring, feet,
-        misc1, misc2, misc3, misc4,
+        misc1, misc2, misc3, misc4, misc5,
         machine1, machine2, machine3, machine4,
-        spellbook, misc5,
-        backpack,
+        spellbook, backpack,
     })
 ));
 
@@ -890,19 +889,19 @@ named_args!(eat_obj_hero(version: H3MVersion, class: H3MObjectClass)<H3MObjectPr
 
 #[derive(Debug)]
 struct H3MObjectMonster {
-    id: u32,
+    id: u32, // AB/SoD
     quantity: u16,
     mood: u8,
-    reward: Option<(String, H3MResources, H3MArtifact2)>,
+    reward: Option<(String, H3MResources, H3MArtifact)>,
     never_runaway: bool,
     never_grow: bool,
 }
 
 named_args!(eat_obj_monster(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
-    id: eat_32 >>
+    id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
     quantity: eat_16 >>
     mood: eat_8 >>
-    reward: eat_option!(tuple!(eat_string, eat_resources, eat_artifact2)) >>
+    reward: eat_option!(tuple!(eat_string, eat_resources, call!(eat_artifact, version))) >>
     never_runaway: eat_flag >>
     never_grow: eat_flag >>
     _zeroes: tag!([0u8; 2]) >>
@@ -1117,13 +1116,15 @@ named_args!(eat_reward(version: H3MVersion)<H3MReward>,
         5 => do_parse!(r: eat_resource >> n: eat_32 >> (H3MReward::Resource(r, n))) |
         6 => do_parse!(s: eat_stat >> n: eat_8 >> (H3MReward::Stat(s, n))) |
         7 => do_parse!(s: eat_skill >> l: eat_skill_level >> (H3MReward::Skill(s, l))) |
-        8 => map!(eat_artifact, |a| H3MReward::Artifact(a)) |
+        8 => map!(call!(eat_artifact, version), |a| H3MReward::Artifact(a)) |
         9 => map!(eat_spell, |s| H3MReward::Spell(s)) |
         10 => do_parse!(c: call!(eat_creature, version) >>
                         n: eat_16 >> (H3MReward::Creatures(c, n)))
     )
 );
 
+
+// Whole struct is AB/SoD
 #[derive(Debug)]
 enum H3MQuestObjective {
     None,
@@ -1131,7 +1132,7 @@ enum H3MQuestObjective {
     Stats((u8, u8, u8, u8)),
     DefeatHero(u32), // TODO
     DefeatMonster(u32), // TODO
-    Artifacts(Vec<H3MArtifact2>),
+    Artifacts(Vec<H3MArtifact>),
     Creatures(Vec<(H3MCreature, u16)>),
     Resources(H3MResources),
     Hero(u8),
@@ -1165,10 +1166,11 @@ struct H3MQuest {
     text_complete: String,
 }
 
+// RoE
 named!(eat_quest1<H3MQuest>,
-    map!(eat_artifact,
+    map!(eat_artifact1,
         |a| H3MQuest {
-            objective: H3MQuestObjective::Artifacts(vec![H3MArtifact2(a.0 as u16)]),
+            objective: H3MQuestObjective::Artifacts(vec![a]),
             deadline: 0xFFFFFFFF,
             text_start: String::default(),
             text_repeat: String::default(),
@@ -1177,6 +1179,7 @@ named!(eat_quest1<H3MQuest>,
     )
 );
 
+// AB/SoD
 named!(eat_quest2<H3MQuest>,
     do_parse!(
         objective: eat_quest_objective >>

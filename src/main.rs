@@ -294,7 +294,7 @@ named!(eat_creature1<H3MCreature>, map!(eat_8, |i| H3MCreature(i as u16)));
 named!(eat_creature2<H3MCreature>, map!(eat_16, |i| H3MCreature(i)));
 
 named_args!(eat_creature(version: H3MVersion)<H3MCreature>,
-            versions!(version, call!(eat_creature1), call!(eat_creature2), call!(eat_creature2))
+    versions!(version, call!(eat_creature1), call!(eat_creature2), call!(eat_creature2))
 );
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -307,18 +307,18 @@ struct H3MSpecialVictoryCondition {
 }
 
 named_args!(eat_special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondition>>,
-       switch!(peek!(eat_8),
-               0xFF => value!(None, eat_8) |
-               _ => do_parse!(
-                       code: eat_8 >>
-                       or_default: eat_flag >>
-                       cpu_allowed: eat_flag >>
-                       condition: call!(eat_victory, version, code) >>
-                       (Some(H3MSpecialVictoryCondition {
-                           condition, or_default, cpu_allowed
-                       }))
-               )
-       )
+    switch!(peek!(eat_8),
+        0xFF => value!(None, eat_8) |
+        _ => do_parse!(
+            code: eat_8 >>
+            or_default: eat_flag >>
+            cpu_allowed: eat_flag >>
+            condition: call!(eat_victory, version, code) >>
+            (Some(H3MSpecialVictoryCondition {
+                condition, or_default, cpu_allowed
+            }))
+        )
+    )
 );
 
 #[derive(Debug)]
@@ -562,11 +562,11 @@ struct H3MHeroEquipment {
     machine3: u16,
     machine4: u16,
     spellbook: u16,
-    misc5: u16,
+    misc5: u16, // SoD
     backpack: Vec<u16>,
 }
 
-named!(eat_hero_equipment<H3MHeroEquipment>, do_parse!(
+named_args!(eat_hero_equipment(version: H3MVersion)<H3MHeroEquipment>, do_parse!(
     head: eat_16 >>
     shoulders: eat_16 >>
     neck: eat_16 >>
@@ -585,7 +585,7 @@ named!(eat_hero_equipment<H3MHeroEquipment>, do_parse!(
     machine3: eat_16 >>
     machine4: eat_16 >>
     spellbook: eat_16 >>
-    misc5: eat_16 >>
+    misc5: versions!(version, value!(0xFFFF), value!(0xFFFF), call!(eat_16)) >>
     backpack: length_count!(eat_16, eat_16) >>
     (H3MHeroEquipment {
         head, shoulders, neck,
@@ -597,6 +597,7 @@ named!(eat_hero_equipment<H3MHeroEquipment>, do_parse!(
     })
 ));
 
+// Whole struct is SoD only
 #[derive(Debug)]
 struct H3MHeroCustomization {
     exp: Option<u32>,
@@ -611,7 +612,7 @@ struct H3MHeroCustomization {
 named!(eat_hero_customization<H3MHeroCustomization>, do_parse!(
     exp: eat_option!(eat_32) >>
     skills: eat_option!(length_count!(eat_32, tuple!(eat_skill, eat_skill_level))) >>
-    equipment: eat_option!(eat_hero_equipment) >>
+    equipment: eat_option!(call!(eat_hero_equipment, H3MVersion::SoD)) >>
     bio: eat_option!(eat_string) >>
     gender: eat_hero_gender >>
     spells: eat_option!(eat_spells_mask) >>
@@ -706,21 +707,21 @@ struct H3MTile {
 impl std::fmt::Debug for H3MTile {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "<{:?}:{:?}{}{}{}{}>",
-               self.terrain, self.texture,
-               if self.flip_terrain_x { "-" } else { "" },
-               if self.flip_terrain_y { "|" } else { "" },
-               if let H3MRiverType::RvNone = self.river_type { "".to_owned() } else {
-                   format!(" {:?}:{:?}{}{}", self.river_type, self.river_topo,
-                           if self.flip_river_x { "-" } else { "" },
-                           if self.flip_river_y { "|" } else { "" },
-                   )
-               },
-               if let H3MRoadType::RdNone = self.road_type { "".to_owned() } else {
-                   format!(" {:?}:{:?}{}{}", self.road_type, self.road_topo,
-                           if self.flip_road_x { "-" } else { "" },
-                           if self.flip_road_y { "|" } else { "" },
-                   )
-               },
+            self.terrain, self.texture,
+            if self.flip_terrain_x { "-" } else { "" },
+            if self.flip_terrain_y { "|" } else { "" },
+            if let H3MRiverType::RvNone = self.river_type { "".to_owned() } else {
+                format!(" {:?}:{:?}{}{}", self.river_type, self.river_topo,
+                        if self.flip_river_x { "-" } else { "" },
+                        if self.flip_river_y { "|" } else { "" },
+                )
+            },
+            if let H3MRoadType::RdNone = self.road_type { "".to_owned() } else {
+                format!(" {:?}:{:?}{}{}", self.road_type, self.road_topo,
+                        if self.flip_road_x { "-" } else { "" },
+                        if self.flip_road_y { "|" } else { "" },
+                )
+            },
         )
     }
 }
@@ -761,29 +762,23 @@ struct H3MObjectTemplate {
     filename: String,
     shape_mask: [u8; 6],
     visit_mask: [u8; 6],
-    terrain_type_mask1: u16,
-    terrain_type_mask2: u16,
+    terrain_type_mask: u32,
     class_subclass: [u8; 8], // TODO:
     group: u8,
     is_overlay: bool,
 }
 
-named_args!(eat_object_template<'a>(used: &'a mut std::collections::BTreeSet<u32>)<H3MObjectTemplate>, do_parse!(
+named!(eat_object_template<H3MObjectTemplate>, do_parse!(
     filename: eat_string >>
     shape_mask: count_fixed!(u8, eat_8, 6) >>
     visit_mask: count_fixed!(u8, eat_8, 6) >>
-    terrain_type_mask1: eat_16 >>
-    terrain_type_mask2: eat_16 >>
-    class_subclass: do_parse!(
-        c: tap!(x: peek!(eat_32) => { used.insert(x); }) >>
-        cl: count_fixed!(u8, eat_8, 8) >>
-        (cl)
-    ) >>
+    terrain_type_mask: eat_32 >>
+    class_subclass: count_fixed!(u8, eat_8, 8) >>
     group: eat_8 >>
     is_overlay: eat_flag >>
     _zeroes: tag!([0u8; 16]) >>
     (H3MObjectTemplate {
-        filename, shape_mask, visit_mask, terrain_type_mask1, terrain_type_mask2,
+        filename, shape_mask, visit_mask, terrain_type_mask,
         class_subclass, group, is_overlay,
     })
 ));
@@ -795,10 +790,10 @@ enum H3MBuildings {
 }
 
 named!(eat_buildings<H3MBuildings>,
-       switch!(eat_flag,
-               true => map!(count_fixed!(u8, eat_8, 12), |m| H3MBuildings::Custom(m)) |
-               false => map!(eat_flag, |f| H3MBuildings::Fort(f))
-       )
+    switch!(eat_flag,
+        true => map!(count_fixed!(u8, eat_8, 12), |m| H3MBuildings::Custom(m)) |
+        false => map!(eat_flag, |f| H3MBuildings::Fort(f))
+    )
 );
 
 #[derive(Debug)]
@@ -853,39 +848,39 @@ named_args!(eat_obj_town(version: H3MVersion, class: H3MObjectClass)<H3MObjectPr
 
 #[derive(Debug)]
 struct H3MObjectHero {
-    id: u32,
+    id: u32, // AB/SoD
     owner: H3MColor,
     hero_type: u8,
     name: Option<String>,
-    exp: Option<u32>,
+    exp: Option<u32>, // RoE*/AB*/SoD
     face: Option<u8>,
     skills: Option<Vec<(H3MSkill, H3MSkillLevel)>>,
     garrison: Option<H3MCreatures>,
     group_formation: bool,
     equipment: Option<H3MHeroEquipment>,
     patrol_radius: u8,
-    bio: Option<String>,
-    gender: H3MHeroGender,
-    spells: Option<H3MSpellsMask>,
-    stats: Option<(u8, u8, u8, u8)>,
+    bio: Option<String>, // AB/SoD
+    gender: H3MHeroGender, // AB/SoD
+    spells: Option<H3MSpellsMask>, // AB*/SoD // TODO: check that one spell
+    stats: Option<(u8, u8, u8, u8)>, // SoD
 }
 
 named_args!(eat_obj_hero(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
-    id: eat_32 >>
+    id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
     owner: eat_color >>
     hero_type: eat_8 >>
     name: eat_option!(eat_string) >>
-    exp: eat_option!(eat_32) >>
+    exp: versions!(version, map!(eat_32, |x| Some(x)), map!(eat_32, |x| Some(x)), eat_option!(eat_32)) >>
     face: eat_option!(eat_8) >>
     skills: eat_option!(length_count!(eat_32, tuple!(eat_skill, eat_skill_level))) >>
     garrison: eat_option!(call!(eat_creatures, version)) >>
     group_formation: eat_flag >>
-    equipment: eat_option!(eat_hero_equipment) >>
+    equipment: eat_option!(call!(eat_hero_equipment, version)) >>
     patrol_radius: eat_8 >>
-    bio: eat_option!(eat_string) >>
-    gender: eat_hero_gender >>
-    spells: eat_option!(eat_spells_mask) >>
-    stats: eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8)) >>
+    bio: versions!(version, value!(None), eat_option!(eat_string), eat_option!(eat_string)) >>
+    gender: versions!(version, value!(H3MHeroGender::Default), call!(eat_hero_gender), call!(eat_hero_gender)) >>
+    spells: versions!(version, value!(None), value!(None, eat_8), eat_option!(eat_spells_mask)) >>
+    stats: versions!(version, value!(None), value!(None), eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8))) >>
     _zeros: tag!([0u8; 16]) >>
     (H3MObjectProperties::Hero(H3MObjectHero {
         id, owner, hero_type, name, exp, face, skills, garrison, group_formation,
@@ -941,10 +936,10 @@ enum H3MDwellingFaction {
 }
 
 named!(eat_dwelling_faction<H3MDwellingFaction>,
-       switch!(peek!(eat_32),
-               0 => do_parse!(z: eat_32 >> m: eat_16 >> (H3MDwellingFaction::Mask(m))) |
-               _ => map!(eat_32, |t| H3MDwellingFaction::SameAsTown(t))
-       )
+    switch!(peek!(eat_32),
+        0 => do_parse!(z: eat_32 >> m: eat_16 >> (H3MDwellingFaction::Mask(m))) |
+        _ => map!(eat_32, |t| H3MDwellingFaction::SameAsTown(t))
+    )
 );
 
 named_args!(eat_obj_dwelling(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
@@ -1000,9 +995,10 @@ named_args!(eat_obj_artifact(version: H3MVersion, class: H3MObjectClass)<H3MObje
     map!(eat_option!(call!(eat_msg_guards, version)), |guard| H3MObjectProperties::Artifact { guard })
 );
 
-named_args!(eat_obj_witch(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
-    map!(eat_32, |skills| H3MObjectProperties::Witch { skills })
-);
+named_args!(eat_obj_witch(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, map!(
+    versions!(version, value!(0x0FFFEFBF), call!(eat_32), call!(eat_32)),
+    |skills| H3MObjectProperties::Witch { skills }
+));
 
 named_args!(eat_obj_shrine(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
     do_parse!(spell: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::Shrine { spell }))
@@ -1043,52 +1039,52 @@ named_args!(eat_obj_garrison(version: H3MVersion, class: H3MObjectClass)<H3MObje
 );
 
 h3m_enum! { <H3MStat, eat_stat, eat_8>
-             (0, Attack)
-             (1, Defense)
-             (2, SpellPower)
-             (3, Knowledge)
+    (0, Attack)
+    (1, Defense)
+    (2, SpellPower)
+    (3, Knowledge)
 }
 
 
 h3m_enum! { <H3MSkill, eat_skill, eat_8>
-             (0, Pathfinding)
-             (1, Archery)
-             (2, Logistics)
-             (3, Scouting)
-             (4, Diplomacy)
-             (5, Navigation)
-             (6, Leadership)
-             (7, Wisdom)
-             (8, Mysticism)
-             (9, Luck)
-             (10, Ballistics)
-             (11, EagleEye)
-             (12, Necromancy)
-             (13, Estates)
-             (14, FireMagic)
-             (15, AirMagic)
-             (16, WaterMagic)
-             (17, EarthMagic)
-             (18, Scholar)
-             (19, Tactics)
-             (20, Artillery)
-             (21, Learning)
-             (22, Offence)
-             (23, Armorer)
-             (24, Intelligence)
-             (25, Sorcery)
-             (26, Resistance)
-             (27, FirstAid)
+    (0, Pathfinding)
+    (1, Archery)
+    (2, Logistics)
+    (3, Scouting)
+    (4, Diplomacy)
+    (5, Navigation)
+    (6, Leadership)
+    (7, Wisdom)
+    (8, Mysticism)
+    (9, Luck)
+    (10, Ballistics)
+    (11, EagleEye)
+    (12, Necromancy)
+    (13, Estates)
+    (14, FireMagic)
+    (15, AirMagic)
+    (16, WaterMagic)
+    (17, EarthMagic)
+    (18, Scholar)
+    (19, Tactics)
+    (20, Artillery)
+    (21, Learning)
+    (22, Offence)
+    (23, Armorer)
+    (24, Intelligence)
+    (25, Sorcery)
+    (26, Resistance)
+    (27, FirstAid)
 }
 
 h3m_enum! { <H3MModifier, eat_modifier, eat_8>
-             (0, None)
-             (1, Plus1)
-             (2, Plus2)
-             (3, Plus3)
-             (255, Minus1)
-             (254, Minus2)
-             (253, Minus3)
+    (0, None)
+    (1, Plus1)
+    (2, Plus2)
+    (3, Plus3)
+    (255, Minus1)
+    (254, Minus2)
+    (253, Minus3)
 }
 
 #[derive(Debug)]
@@ -1171,13 +1167,13 @@ struct H3MQuest {
 
 named!(eat_quest1<H3MQuest>,
     map!(eat_artifact,
-         |a| H3MQuest {
-             objective: H3MQuestObjective::Artifacts(vec![H3MArtifact2(a.0 as u16)]),
-             deadline: 0xFFFFFFFF,
-             text_start: String::default(),
-             text_repeat: String::default(),
-             text_complete: String::default(),
-         }
+        |a| H3MQuest {
+            objective: H3MQuestObjective::Artifacts(vec![H3MArtifact2(a.0 as u16)]),
+            deadline: 0xFFFFFFFF,
+            text_start: String::default(),
+            text_repeat: String::default(),
+            text_complete: String::default(),
+        }
     )
 );
 
@@ -1234,162 +1230,162 @@ fn eat_obj_unimpl<'a>(_: &'a[u8], _: H3MVersion, class: H3MObjectClass) -> nom::
 
 h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
 // Objects without additional properties
-             (2, AltarOfSacrifice, eat_obj_noprops)
-             (4, Arena, eat_obj_noprops)
-             (7, BlackMarket, eat_obj_noprops)
-             (9, BorderGuard, eat_obj_noprops)
-             (10, KeymastersTent, eat_obj_noprops)
-             (11, Buoy, eat_obj_noprops)
-             (12, Campfire, eat_obj_noprops)
-             (13, Cartographer, eat_obj_noprops)
-             (14, SwanPond, eat_obj_noprops)
-             (16, CreatureBank, eat_obj_noprops)
-             (21, CursedGround1, eat_obj_noprops)
-             (22, Corpse, eat_obj_noprops)
-             (23, MarlettoTower, eat_obj_noprops)
-             (24, DerelictShip, eat_obj_noprops)
-             (25, DragonUtopia, eat_obj_noprops)
-             (27, EyeOfMagi, eat_obj_noprops)
-             (28, FaerieRing, eat_obj_noprops)
-             (29, Flotsam, eat_obj_noprops)
-             (30, FountainOfFortune, eat_obj_noprops)
-             (31, FountainOfYouth, eat_obj_noprops)
-             (32, GardenOfRevelation, eat_obj_noprops)
-             (37, HutOfMagi, eat_obj_noprops)
-             (38, IdolOfFortune, eat_obj_noprops)
-             (39, LeanTo, eat_obj_noprops)
-             (41, LibraryOfEnlightenment, eat_obj_noprops)
-             (43, MonolithEntrance, eat_obj_noprops)
-             (44, MonolithExit, eat_obj_noprops)
-             (45, MonolithTwoWay, eat_obj_noprops)
-             (46, MagicPlains1, eat_obj_noprops)
-             (47, SchoolOfMagic, eat_obj_noprops)
-             (48, MagicSpring, eat_obj_noprops)
-             (49, MagicWell, eat_obj_noprops)
-             (51, MercenaryCamp, eat_obj_noprops)
-             (52, Mermaid, eat_obj_noprops)
-             (55, MysticalGarden, eat_obj_noprops)
-             (56, Oasis, eat_obj_noprops)
-             (57, Obelisk, eat_obj_noprops)
-             (58, RedwoodObservatory, eat_obj_noprops)
-             (60, PillarOfFire, eat_obj_noprops)
-             (61, StarAxis, eat_obj_noprops)
-             (63, Pyramid, eat_obj_noprops)
-             (64, RallyFlag, eat_obj_noprops)
-             (78, RefugeeCamp, eat_obj_noprops)
-             (80, Sanctuary, eat_obj_noprops)
-             (82, SeaChest, eat_obj_noprops)
-             (84, Crypt, eat_obj_noprops)
-             (85, Shipwreck, eat_obj_noprops)
-             (86, ShipwreckSurvivor, eat_obj_noprops)
-             (92, Sirens, eat_obj_noprops)
-             (94, Stables, eat_obj_noprops)
-             (95, Tavern, eat_obj_noprops)
-             (96, Temple, eat_obj_noprops)
-             (97, DenOfThieves, eat_obj_noprops)
-             (99, TradingPost, eat_obj_noprops)
-             (100, LearningStone, eat_obj_noprops)
-             (101, TreasureChest, eat_obj_noprops)
-             (102, TreeOfKnowledge, eat_obj_noprops)
-             (103, SubterraneanGate, eat_obj_noprops)
-             (104, University, eat_obj_noprops)
-             (105, Wagon, eat_obj_noprops)
-             (106, WarMachineFactory, eat_obj_noprops)
-             (107, SchoolOfWar, eat_obj_noprops)
-             (108, WarriorsTomb, eat_obj_noprops)
-             (109, WaterWheel, eat_obj_noprops)
-             (110, WateringHole, eat_obj_noprops)
-             (111, Whirlpool, eat_obj_noprops)
-             (112, Windmill, eat_obj_noprops)
-             (116, Cactus, eat_obj_noprops)
-             (117, Canyon, eat_obj_noprops)
-             (118, Crater, eat_obj_noprops)
-             (119, DeadVegetation, eat_obj_noprops)
-             (120, Flowers, eat_obj_noprops)
-             (121, FrozenLake, eat_obj_noprops)
-             (124, Hole, eat_obj_noprops)
-             (125, Kelp, eat_obj_noprops)
-             (126, Lake, eat_obj_noprops)
-             (127, LavaFlow, eat_obj_noprops)
-             (128, LavaLake, eat_obj_noprops)
-             (129, Mushrooms, eat_obj_noprops)
-             (130, Log, eat_obj_noprops)
-             (131, Mandrake, eat_obj_noprops)
-             (132, Moss, eat_obj_noprops)
-             (133, Mound, eat_obj_noprops)
-             (134, Mountain, eat_obj_noprops)
-             (135, OakTrees, eat_obj_noprops)
-             (136, Outcropping, eat_obj_noprops)
-             (137, PineTrees, eat_obj_noprops)
-             (143, RiverDelta, eat_obj_noprops)
-             (147, Rock, eat_obj_noprops)
-             (148, SandDune, eat_obj_noprops)
-             (150, Shrub, eat_obj_noprops)
-             (151, Skull, eat_obj_noprops)
-             (153, Stump, eat_obj_noprops)
-             (155, Trees, eat_obj_noprops)
-             (158, Volcano, eat_obj_noprops)
-             (161, Reef, eat_obj_noprops)
-             (177, Lake2, eat_obj_noprops)
-             (199, Trees2, eat_obj_noprops)
-             (206, DesertHills, eat_obj_noprops)
-             (207, DirtHills, eat_obj_noprops)
-             (208, GrassHills, eat_obj_noprops)
-             (209, RoughHills, eat_obj_noprops)
-             (210, SubterraneanRocks, eat_obj_noprops)
-             (211, SwampFoliage, eat_obj_noprops)
-             (212, BorderGate, eat_obj_noprops)
+    (2, AltarOfSacrifice, eat_obj_noprops)
+    (4, Arena, eat_obj_noprops)
+    (7, BlackMarket, eat_obj_noprops)
+    (9, BorderGuard, eat_obj_noprops)
+    (10, KeymastersTent, eat_obj_noprops)
+    (11, Buoy, eat_obj_noprops)
+    (12, Campfire, eat_obj_noprops)
+    (13, Cartographer, eat_obj_noprops)
+    (14, SwanPond, eat_obj_noprops)
+    (16, CreatureBank, eat_obj_noprops)
+    (21, CursedGround1, eat_obj_noprops)
+    (22, Corpse, eat_obj_noprops)
+    (23, MarlettoTower, eat_obj_noprops)
+    (24, DerelictShip, eat_obj_noprops)
+    (25, DragonUtopia, eat_obj_noprops)
+    (27, EyeOfMagi, eat_obj_noprops)
+    (28, FaerieRing, eat_obj_noprops)
+    (29, Flotsam, eat_obj_noprops)
+    (30, FountainOfFortune, eat_obj_noprops)
+    (31, FountainOfYouth, eat_obj_noprops)
+    (32, GardenOfRevelation, eat_obj_noprops)
+    (37, HutOfMagi, eat_obj_noprops)
+    (38, IdolOfFortune, eat_obj_noprops)
+    (39, LeanTo, eat_obj_noprops)
+    (41, LibraryOfEnlightenment, eat_obj_noprops)
+    (43, MonolithEntrance, eat_obj_noprops)
+    (44, MonolithExit, eat_obj_noprops)
+    (45, MonolithTwoWay, eat_obj_noprops)
+    (46, MagicPlains1, eat_obj_noprops)
+    (47, SchoolOfMagic, eat_obj_noprops)
+    (48, MagicSpring, eat_obj_noprops)
+    (49, MagicWell, eat_obj_noprops)
+    (51, MercenaryCamp, eat_obj_noprops)
+    (52, Mermaid, eat_obj_noprops)
+    (55, MysticalGarden, eat_obj_noprops)
+    (56, Oasis, eat_obj_noprops)
+    (57, Obelisk, eat_obj_noprops)
+    (58, RedwoodObservatory, eat_obj_noprops)
+    (60, PillarOfFire, eat_obj_noprops)
+    (61, StarAxis, eat_obj_noprops)
+    (63, Pyramid, eat_obj_noprops)
+    (64, RallyFlag, eat_obj_noprops)
+    (78, RefugeeCamp, eat_obj_noprops)
+    (80, Sanctuary, eat_obj_noprops)
+    (82, SeaChest, eat_obj_noprops)
+    (84, Crypt, eat_obj_noprops)
+    (85, Shipwreck, eat_obj_noprops)
+    (86, ShipwreckSurvivor, eat_obj_noprops)
+    (92, Sirens, eat_obj_noprops)
+    (94, Stables, eat_obj_noprops)
+    (95, Tavern, eat_obj_noprops)
+    (96, Temple, eat_obj_noprops)
+    (97, DenOfThieves, eat_obj_noprops)
+    (99, TradingPost, eat_obj_noprops)
+    (100, LearningStone, eat_obj_noprops)
+    (101, TreasureChest, eat_obj_noprops)
+    (102, TreeOfKnowledge, eat_obj_noprops)
+    (103, SubterraneanGate, eat_obj_noprops)
+    (104, University, eat_obj_noprops)
+    (105, Wagon, eat_obj_noprops)
+    (106, WarMachineFactory, eat_obj_noprops)
+    (107, SchoolOfWar, eat_obj_noprops)
+    (108, WarriorsTomb, eat_obj_noprops)
+    (109, WaterWheel, eat_obj_noprops)
+    (110, WateringHole, eat_obj_noprops)
+    (111, Whirlpool, eat_obj_noprops)
+    (112, Windmill, eat_obj_noprops)
+    (116, Cactus, eat_obj_noprops)
+    (117, Canyon, eat_obj_noprops)
+    (118, Crater, eat_obj_noprops)
+    (119, DeadVegetation, eat_obj_noprops)
+    (120, Flowers, eat_obj_noprops)
+    (121, FrozenLake, eat_obj_noprops)
+    (124, Hole, eat_obj_noprops)
+    (125, Kelp, eat_obj_noprops)
+    (126, Lake, eat_obj_noprops)
+    (127, LavaFlow, eat_obj_noprops)
+    (128, LavaLake, eat_obj_noprops)
+    (129, Mushrooms, eat_obj_noprops)
+    (130, Log, eat_obj_noprops)
+    (131, Mandrake, eat_obj_noprops)
+    (132, Moss, eat_obj_noprops)
+    (133, Mound, eat_obj_noprops)
+    (134, Mountain, eat_obj_noprops)
+    (135, OakTrees, eat_obj_noprops)
+    (136, Outcropping, eat_obj_noprops)
+    (137, PineTrees, eat_obj_noprops)
+    (143, RiverDelta, eat_obj_noprops)
+    (147, Rock, eat_obj_noprops)
+    (148, SandDune, eat_obj_noprops)
+    (150, Shrub, eat_obj_noprops)
+    (151, Skull, eat_obj_noprops)
+    (153, Stump, eat_obj_noprops)
+    (155, Trees, eat_obj_noprops)
+    (158, Volcano, eat_obj_noprops)
+    (161, Reef, eat_obj_noprops)
+    (177, Lake2, eat_obj_noprops)
+    (199, Trees2, eat_obj_noprops)
+    (206, DesertHills, eat_obj_noprops)
+    (207, DirtHills, eat_obj_noprops)
+    (208, GrassHills, eat_obj_noprops)
+    (209, RoughHills, eat_obj_noprops)
+    (210, SubterraneanRocks, eat_obj_noprops)
+    (211, SwampFoliage, eat_obj_noprops)
+    (212, BorderGate, eat_obj_noprops)
 
 // Objects with additional properties:
-             (5, Artifact, eat_obj_artifact)
-             (6, PandorasBox, eat_obj_unimpl)
-             (17, CreatureGenerator1, eat_obj_owned)
-             (18, CreatureGenerator2, eat_obj_owned)
-             (19, CreatureGenerator3, eat_obj_owned)
-             (20, CreatureGenerator4, eat_obj_owned)
-             (26, Event, eat_obj_unimpl)
-             (33, Garrison, eat_obj_garrison)
-             (34, Hero, eat_obj_hero)
-             (36, Grail, eat_obj_grail)
-             (42, Lighthouse, eat_obj_owned)
-             (53, Mine, eat_obj_owned)
-             (54, Monster, eat_obj_monster)
-             (59, OceanBottle, eat_obj_message)
-             (62, Prison, eat_obj_hero)
-             (65, RandomArtifact, eat_obj_unimpl)
-             (66, RandomTreasureArtifact, eat_obj_artifact)
-             (67, RandomMinorArtifact, eat_obj_artifact)
-             (68, RandomMajorArtifact, eat_obj_artifact)
-             (69, RandomRelicArtifact, eat_obj_artifact)
-             (70, RandomHero, eat_obj_hero)
-             (71, RandomMonster, eat_obj_monster)
-             (72, RandomMonster1, eat_obj_monster)
-             (73, RandomMonster2, eat_obj_monster)
-             (74, RandomMonster3, eat_obj_monster)
-             (75, RandomMonster4, eat_obj_monster)
-             (76, RandomResource, eat_obj_resource)
-             (77, RandomTown, eat_obj_town)
-             (79, Resource, eat_obj_resource)
-             (81, Scholar, eat_obj_scholar)
-             (83, SeerHut, eat_obj_seer)
-             (87, Shipyard, eat_obj_owned)
-             (88, ShrineOfMagicIncantation, eat_obj_shrine)
-             (89, ShrineOfMagicGesture, eat_obj_shrine)
-             (90, ShrineOfMagicThought, eat_obj_shrine)
-             (91, Sign, eat_obj_message)
-             (93, SpellScroll, eat_obj_unimpl)
-             (98, Town, eat_obj_town)
-             (113, WitchHut, eat_obj_witch)
-             (162, RandomMonster5, eat_obj_monster)
-             (163, RandomMonster6, eat_obj_monster)
-             (164, RandomMonster7, eat_obj_monster)
-             (214, HeroPlaceholder, eat_obj_placeholder)
-             (215, QuestGuard, eat_obj_unimpl)
-             (216, RandomDwelling, eat_obj_dwelling)
-             (217, RandomDwellingLevel, eat_obj_dwelling_level)
-             (218, RandomDwellingFaction, eat_obj_dwelling_faction)
-             (219, Garrison2, eat_obj_garrison)
-             (220, AbandonedMine, eat_obj_abandoned)
+    (5, Artifact, eat_obj_artifact)
+    (6, PandorasBox, eat_obj_unimpl)
+    (17, CreatureGenerator1, eat_obj_owned)
+    (18, CreatureGenerator2, eat_obj_owned)
+    (19, CreatureGenerator3, eat_obj_owned)
+    (20, CreatureGenerator4, eat_obj_owned)
+    (26, Event, eat_obj_unimpl)
+    (33, Garrison, eat_obj_garrison)
+    (34, Hero, eat_obj_hero)
+    (36, Grail, eat_obj_grail)
+    (42, Lighthouse, eat_obj_owned)
+    (53, Mine, eat_obj_owned)
+    (54, Monster, eat_obj_monster)
+    (59, OceanBottle, eat_obj_message)
+    (62, Prison, eat_obj_hero)
+    (65, RandomArtifact, eat_obj_unimpl)
+    (66, RandomTreasureArtifact, eat_obj_artifact)
+    (67, RandomMinorArtifact, eat_obj_artifact)
+    (68, RandomMajorArtifact, eat_obj_artifact)
+    (69, RandomRelicArtifact, eat_obj_artifact)
+    (70, RandomHero, eat_obj_hero)
+    (71, RandomMonster, eat_obj_monster)
+    (72, RandomMonster1, eat_obj_monster)
+    (73, RandomMonster2, eat_obj_monster)
+    (74, RandomMonster3, eat_obj_monster)
+    (75, RandomMonster4, eat_obj_monster)
+    (76, RandomResource, eat_obj_resource)
+    (77, RandomTown, eat_obj_town)
+    (79, Resource, eat_obj_resource)
+    (81, Scholar, eat_obj_scholar)
+    (83, SeerHut, eat_obj_seer)
+    (87, Shipyard, eat_obj_owned)
+    (88, ShrineOfMagicIncantation, eat_obj_shrine)
+    (89, ShrineOfMagicGesture, eat_obj_shrine)
+    (90, ShrineOfMagicThought, eat_obj_shrine)
+    (91, Sign, eat_obj_message)
+    (93, SpellScroll, eat_obj_unimpl)
+    (98, Town, eat_obj_town)
+    (113, WitchHut, eat_obj_witch)
+    (162, RandomMonster5, eat_obj_monster)
+    (163, RandomMonster6, eat_obj_monster)
+    (164, RandomMonster7, eat_obj_monster)
+    (214, HeroPlaceholder, eat_obj_placeholder)
+    (215, QuestGuard, eat_obj_unimpl)
+    (216, RandomDwelling, eat_obj_dwelling)
+    (217, RandomDwellingLevel, eat_obj_dwelling_level)
+    (218, RandomDwellingFaction, eat_obj_dwelling_faction)
+    (219, Garrison2, eat_obj_garrison)
+    (220, AbandonedMine, eat_obj_abandoned)
 }
 
 impl Clone for H3MObjectClass {
@@ -1439,12 +1435,10 @@ named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
     class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class_subclass)) >>
-    _debug: tap!(class: value!(class) => {
-        println!("reading object `{:?}` class={} subclass={}",
-                 class,
-                 make_class(&templates[template_idx as usize].class_subclass),
-                 make_subclass(&templates[template_idx as usize].class_subclass),
-    )}) >>
+    _debug: value!({
+        let bytes = &templates[template_idx as usize].class_subclass;
+        println!("reading props for {}/{} -> {:?}", make_class(bytes), make_subclass(bytes), class);
+    }) >>
     properties: call!(class.to_debug(), version, class) >>
     (H3MObject {
         loc, template_idx, properties
@@ -1501,7 +1495,7 @@ struct H3MFile {
     events: Vec<H3MEvent>,
 }
 
-named_args!(eat_h3m<'a>(used_classes: &'a mut std::collections::BTreeSet<u32>)<H3MFile>, do_parse!(
+named!(eat_h3m<H3MFile>, do_parse!(
     header: eat_header >>
     players: count!(call!(eat_player, header.version), 8) >>
     victory: call!(eat_special_victory, header.version) >>
@@ -1523,10 +1517,7 @@ named_args!(eat_h3m<'a>(used_classes: &'a mut std::collections::BTreeSet<u32>)<H
         false => value!(None) |
         true => map!(count!(eat_tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { tiles }))
     ) >>
-    object_templates: tap!(
-        ts: length_count!(eat_32, call!(eat_object_template, used_classes)) =>
-        { println!("used classes: {:?}", used_classes) }
-    ) >>
+    object_templates: length_count!(eat_32, eat_object_template) >>
     objects: length_count!(eat_32, call!(eat_object, header.version, &object_templates)) >>
     events: length_count!(eat_32, call!(eat_event, header.version)) >>
     _trailing_zeroes: count!(tag!([0u8]), 124) >>
@@ -1601,7 +1592,7 @@ fn main() {
                 println!("\n{}", dump);
             }
 
-            match eat_h3m(&bin, &mut std::collections::BTreeSet::new()) {
+            match eat_h3m(&bin) {
                 nom::IResult::Done(rem, doc) => {
                     println!("parsed document: {:#?}", doc);
 

@@ -763,9 +763,7 @@ struct H3MObjectTemplate {
     visit_mask: [u8; 6],
     terrain_type_mask1: u16,
     terrain_type_mask2: u16,
-    //class: H3MObjectClass,
-    class: [u8; 4], // TODO: pass like this until all possible classes are implemented
-    subclass: u32,
+    class_subclass: [u8; 8], // TODO:
     group: u8,
     is_overlay: bool,
 }
@@ -776,19 +774,17 @@ named_args!(eat_object_template<'a>(used: &'a mut std::collections::BTreeSet<u32
     visit_mask: count_fixed!(u8, eat_8, 6) >>
     terrain_type_mask1: eat_16 >>
     terrain_type_mask2: eat_16 >>
-    class: do_parse!(
+    class_subclass: do_parse!(
         c: tap!(x: peek!(eat_32) => { used.insert(x); }) >>
-        //cl: tap!(x: eat_obj_class => { println!("is known as: {:?}", x) }) >>
-        cl: count_fixed!(u8, eat_8, 4) >>
+        cl: count_fixed!(u8, eat_8, 8) >>
         (cl)
     ) >>
-    subclass: eat_32 >>
     group: eat_8 >>
     is_overlay: eat_flag >>
     _zeroes: tag!([0u8; 16]) >>
     (H3MObjectTemplate {
         filename, shape_mask, visit_mask, terrain_type_mask1, terrain_type_mask2,
-        class, subclass, group, is_overlay,
+        class_subclass, group, is_overlay,
     })
 ));
 
@@ -1259,30 +1255,48 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (30, FountainOfFortune, eat_obj_noprops)
              (31, FountainOfYouth, eat_obj_noprops)
              (32, GardenOfRevelation, eat_obj_noprops)
+             (37, HutOfMagi, eat_obj_noprops)
              (38, IdolOfFortune, eat_obj_noprops)
+             (39, LeanTo, eat_obj_noprops)
+             (41, LibraryOfEnlightenment, eat_obj_noprops)
              (43, MonolithEntrance, eat_obj_noprops)
              (44, MonolithExit, eat_obj_noprops)
              (45, MonolithTwoWay, eat_obj_noprops)
+             (46, MagicPlains1, eat_obj_noprops)
              (47, SchoolOfMagic, eat_obj_noprops)
              (48, MagicSpring, eat_obj_noprops)
              (49, MagicWell, eat_obj_noprops)
              (51, MercenaryCamp, eat_obj_noprops)
+             (52, Mermaid, eat_obj_noprops)
+             (55, MysticalGarden, eat_obj_noprops)
              (56, Oasis, eat_obj_noprops)
              (57, Obelisk, eat_obj_noprops)
              (58, RedwoodObservatory, eat_obj_noprops)
              (60, PillarOfFire, eat_obj_noprops)
              (61, StarAxis, eat_obj_noprops)
+             (63, Pyramid, eat_obj_noprops)
              (64, RallyFlag, eat_obj_noprops)
+             (78, RefugeeCamp, eat_obj_noprops)
+             (80, Sanctuary, eat_obj_noprops)
+             (82, SeaChest, eat_obj_noprops)
+             (84, Crypt, eat_obj_noprops)
              (85, Shipwreck, eat_obj_noprops)
              (86, ShipwreckSurvivor, eat_obj_noprops)
+             (92, Sirens, eat_obj_noprops)
+             (94, Stables, eat_obj_noprops)
+             (95, Tavern, eat_obj_noprops)
              (96, Temple, eat_obj_noprops)
              (97, DenOfThieves, eat_obj_noprops)
+             (99, TradingPost, eat_obj_noprops)
              (100, LearningStone, eat_obj_noprops)
              (101, TreasureChest, eat_obj_noprops)
              (102, TreeOfKnowledge, eat_obj_noprops)
              (103, SubterraneanGate, eat_obj_noprops)
+             (104, University, eat_obj_noprops)
              (105, Wagon, eat_obj_noprops)
+             (106, WarMachineFactory, eat_obj_noprops)
              (107, SchoolOfWar, eat_obj_noprops)
+             (108, WarriorsTomb, eat_obj_noprops)
              (109, WaterWheel, eat_obj_noprops)
              (110, WateringHole, eat_obj_noprops)
              (111, Whirlpool, eat_obj_noprops)
@@ -1294,6 +1308,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (120, Flowers, eat_obj_noprops)
              (121, FrozenLake, eat_obj_noprops)
              (124, Hole, eat_obj_noprops)
+             (125, Kelp, eat_obj_noprops)
              (126, Lake, eat_obj_noprops)
              (127, LavaFlow, eat_obj_noprops)
              (128, LavaLake, eat_obj_noprops)
@@ -1314,6 +1329,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (153, Stump, eat_obj_noprops)
              (155, Trees, eat_obj_noprops)
              (158, Volcano, eat_obj_noprops)
+             (161, Reef, eat_obj_noprops)
              (177, Lake2, eat_obj_noprops)
              (199, Trees2, eat_obj_noprops)
              (206, DesertHills, eat_obj_noprops)
@@ -1335,11 +1351,11 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
              (33, Garrison, eat_obj_garrison)
              (34, Hero, eat_obj_hero)
              (36, Grail, eat_obj_grail)
-             (42, Lighthouse, eat_obj_unimpl)
+             (42, Lighthouse, eat_obj_owned)
              (53, Mine, eat_obj_owned)
              (54, Monster, eat_obj_monster)
              (59, OceanBottle, eat_obj_message)
-             (62, Prison, eat_obj_unimpl)
+             (62, Prison, eat_obj_hero)
              (65, RandomArtifact, eat_obj_unimpl)
              (66, RandomTreasureArtifact, eat_obj_artifact)
              (67, RandomMinorArtifact, eat_obj_artifact)
@@ -1389,14 +1405,32 @@ struct H3MObject {
     properties: H3MObjectProperties,
 }
 
-fn eat_obj_class_or_panic(inp: &[u8; 4]) -> H3MObjectClass {
+fn make_class(inp: &[u8; 8]) -> u32 {
     let mut id = inp[0] as u32;
     id += (inp[1] as u32) << 8;
     id += (inp[2] as u32) << 16;
     id += (inp[3] as u32) << 24;
+
+    id
+}
+
+fn make_subclass(inp: &[u8; 8]) -> u32 {
+    let mut subid = inp[4] as u32;
+    subid += (inp[5] as u32) << 8;
+    subid += (inp[6] as u32) << 16;
+    subid += (inp[7] as u32) << 24;
+
+    subid
+}
+
+fn eat_obj_class_or_panic(inp: &[u8; 8]) -> H3MObjectClass {
     match eat_obj_class(inp) {
-        nom::IResult::Done(_, class) => class,
-        _ => panic!("error parsing class: {}", id),
+        nom::IResult::Done(_, class) =>
+
+            if let (H3MObjectClass::Mine, 7) = (class, make_subclass(inp)) {
+                H3MObjectClass::AbandonedMine
+            } else { class },
+        _ => panic!("error parsing class: {}", make_class(inp)),
     }
 }
 
@@ -1404,8 +1438,13 @@ named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate
     loc: eat_location >>
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
-    class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class)) >>
-    _debug: tap!(class: value!(class) => { println!("reading object of class {:?}", class) }) >>
+    class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class_subclass)) >>
+    _debug: tap!(class: value!(class) => {
+        println!("reading object `{:?}` class={} subclass={}",
+                 class,
+                 make_class(&templates[template_idx as usize].class_subclass),
+                 make_subclass(&templates[template_idx as usize].class_subclass),
+    )}) >>
     properties: call!(class.to_debug(), version, class) >>
     (H3MObject {
         loc, template_idx, properties

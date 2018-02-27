@@ -9,11 +9,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use flate2::bufread::GzDecoder;
 
-use nom::{le_u8, le_u16, le_u32};
-
-named!(eat_8<u8>, call!(le_u8));
-named!(eat_16<u16>, call!(le_u16));
-named!(eat_32<u32>, call!(le_u32));
+use nom::{le_u8 as eat_8, le_u16 as eat_16, le_u32 as eat_32};
 
 macro_rules! eat_option (
     ($i:expr, $submac:ident!( $($args:tt)* )) => (
@@ -344,10 +340,8 @@ named_args!(eat_victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, swi
                       (H3MVictoryCondition::AccumResources(res, amount))) |
     0x03 => do_parse!(loc: eat_location >> hall: eat_hall_level >> castle: eat_castle_level >>
                       (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
-    0x04 => map!(alt!(
-        tag!([255u8; 3]) => {|x| None} |
-        call!(eat_location) => {|x| Some(x)}
-    ), |loc| H3MVictoryCondition::BuildGrail(loc)) |
+    0x04 => map!(alt!(tag!([255u8; 3]) => { |_| None } | call!(eat_location) => { |x| Some(x) }),
+        |loc| H3MVictoryCondition::BuildGrail(loc)) |
     0x05 => map!(eat_location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
     0x06 => map!(eat_location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
     0x07 => map!(eat_location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
@@ -831,7 +825,7 @@ struct H3MObjectTown {
     alignment: u8,
 }
 
-named_args!(eat_obj_town(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_town(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
     owner: eat_color >>
     name: eat_option!(eat_string) >>
@@ -855,7 +849,7 @@ struct H3MObjectHero {
     owner: H3MColor,
     hero_type: u8,
     name: Option<String>,
-    exp: Option<u32>, // RoE*/AB*/SoD
+    exp: Option<u32>, // RoE'/AB'/SoD
     face: Option<u8>,
     skills: Option<Vec<(H3MSkill, H3MSkillLevel)>>,
     garrison: Option<H3MCreatures>,
@@ -864,11 +858,11 @@ struct H3MObjectHero {
     patrol_radius: u8,
     bio: Option<String>, // AB/SoD
     gender: H3MHeroGender, // AB/SoD
-    spells: Option<H3MSpellsMask>, // AB*/SoD // TODO: check that one spell
+    spells: Option<H3MSpellsMask>, // AB'/SoD // TODO: check that one spell
     stats: Option<(u8, u8, u8, u8)>, // SoD
 }
 
-named_args!(eat_obj_hero(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
     owner: eat_color >>
     hero_type: eat_8 >>
@@ -901,7 +895,7 @@ struct H3MObjectMonster {
     never_grow: bool,
 }
 
-named_args!(eat_obj_monster(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_monster(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
     quantity: eat_16 >>
     mood: eat_8 >>
@@ -914,7 +908,7 @@ named_args!(eat_obj_monster(version: H3MVersion, class: H3MObjectClass)<H3MObjec
     }))
 ));
 
-named_args!(eat_obj_placeholder(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_placeholder(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     id: eat_8 >>
     power_rating: switch!(value!(id == 0xFF),
@@ -926,7 +920,7 @@ named_args!(eat_obj_placeholder(version: H3MVersion, class: H3MObjectClass)<H3MO
     })
 ));
 
-named_args!(eat_obj_owned(_version: H3MVersion, _class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_owned(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     (H3MObjectProperties::OwnedObject { owner })
@@ -945,7 +939,7 @@ named!(eat_dwelling_faction<H3MDwellingFaction>,
     )
 );
 
-named_args!(eat_obj_dwelling(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_dwelling(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     faction: eat_dwelling_faction >>
@@ -953,21 +947,21 @@ named_args!(eat_obj_dwelling(version: H3MVersion, class: H3MObjectClass)<H3MObje
     (H3MObjectProperties::RandomDwelling { owner, faction, level_range })
 ));
 
-named_args!(eat_obj_dwelling_level(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_dwelling_level(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     faction: eat_dwelling_faction >>
     (H3MObjectProperties::RandomDwellingLevel { owner, faction  })
 ));
 
-named_args!(eat_obj_dwelling_faction(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_dwelling_faction(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: eat_color >>
     _zeroes: tag!([0u8; 3]) >>
     level_range: tuple!(eat_8, eat_8) >>
     (H3MObjectProperties::RandomDwellingFaction { owner, level_range })
 ));
 
-named_args!(eat_obj_resource(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, do_parse!(
+named_args!(eat_obj_resource(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     guard: eat_option!(call!(eat_msg_guards, version)) >>
     amount: eat_32 >>
     _zeroes: tag!([0u8; 4]) >>
@@ -994,11 +988,11 @@ named_args!(eat_creatures(version: H3MVersion)<H3MCreatures>,
     map!(count_fixed!((H3MCreature, u16), tuple!(call!(eat_creature, version), eat_16), 7), |cs| H3MCreatures(cs))
 );
 
-named_args!(eat_obj_artifact(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_artifact(version: H3MVersion)<H3MObjectProperties>,
     map!(eat_option!(call!(eat_msg_guards, version)), |guard| H3MObjectProperties::Artifact { guard })
 );
 
-named_args!(eat_obj_scroll(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_scroll(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         guard: eat_option!(call!(eat_msg_guards, version)) >>
         spell: eat_spell >>
@@ -1007,24 +1001,24 @@ named_args!(eat_obj_scroll(version: H3MVersion, class: H3MObjectClass)<H3MObject
     )
 );
 
-named_args!(eat_obj_witch(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, map!(
+named_args!(eat_obj_witch(version: H3MVersion)<H3MObjectProperties>, map!(
     versions!(version, value!(0x0FFFEFBF), call!(eat_32), call!(eat_32)),
     |skills| H3MObjectProperties::Witch { skills }
 ));
 
-named_args!(eat_obj_shrine(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_shrine(_v: H3MVersion)<H3MObjectProperties>,
     do_parse!(spell: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::Shrine { spell }))
 );
 
-named_args!(eat_obj_grail(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_grail(_v: H3MVersion)<H3MObjectProperties>,
     map!(eat_32, |radius| H3MObjectProperties::Grail { radius })
 );
 
-named_args!(eat_obj_message(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_message(_v: H3MVersion)<H3MObjectProperties>,
     do_parse!(text: eat_string >> _zeroes: tag!([0u8; 4]) >> (H3MObjectProperties::Message { text }))
 );
 
-named_args!(eat_obj_scholar(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_scholar(_v: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         bonus_type: eat_8 >>
         bonus_id: eat_8 >>
@@ -1033,11 +1027,11 @@ named_args!(eat_obj_scholar(version: H3MVersion, class: H3MObjectClass)<H3MObjec
     )
 );
 
-named_args!(eat_obj_abandoned(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_abandoned(_v: H3MVersion)<H3MObjectProperties>,
     do_parse!(resources: eat_8 >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::AbandonedMine { resources }))
 );
 
-named_args!(eat_obj_garrison(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_garrison(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         owner: eat_color >>
         _zeroes1: tag!([0u8; 3]) >>
@@ -1056,7 +1050,6 @@ h3m_enum! { <H3MStat, eat_stat, eat_8>
     (2, SpellPower)
     (3, Knowledge)
 }
-
 
 h3m_enum! { <H3MSkill, eat_skill, eat_8>
     (0, Pathfinding)
@@ -1136,7 +1129,6 @@ named_args!(eat_reward(version: H3MVersion)<H3MReward>,
     )
 );
 
-
 // Whole struct is AB/SoD
 #[derive(Debug)]
 enum H3MQuestObjective {
@@ -1206,7 +1198,7 @@ named!(eat_quest2<H3MQuest>,
     )
 );
 
-named_args!(eat_obj_seer(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_seer(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         quest: versions!(version, call!(eat_quest1), call!(eat_quest2), call!(eat_quest2)) >>
         reward: call!(eat_reward, version) >>
@@ -1215,7 +1207,7 @@ named_args!(eat_obj_seer(version: H3MVersion, class: H3MObjectClass)<H3MObjectPr
     )
 );
 
-named_args!(eat_obj_quest_guard(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_quest_guard(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         quest: versions!(version, call!(eat_quest1), call!(eat_quest2), call!(eat_quest2)) >>
         (H3MObjectProperties::QuestGuard { quest })
@@ -1258,12 +1250,12 @@ named_args!(eat_msg_guard_reward(version: H3MVersion)<H3MMsgGuardReward>,
     )
 );
 
-named_args!(eat_obj_pandora(version: H3MVersion, _c: H3MObjectClass)<H3MObjectProperties>, map!(
+named_args!(eat_obj_pandora(version: H3MVersion)<H3MObjectProperties>, map!(
     call!(eat_msg_guard_reward, version),
     |contents| H3MObjectProperties::Pandora { contents }
 ));
 
-named_args!(eat_obj_event(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+named_args!(eat_obj_event(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         contents: call!(eat_msg_guard_reward, version) >>
         players_mask: eat_8 >>
@@ -1303,9 +1295,9 @@ enum H3MObjectProperties {
     NoProperties,
 }
 
-named_args!(eat_obj_noprops(v: H3MVersion, c: H3MObjectClass)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
+named_args!(eat_obj_noprops(_v: H3MVersion)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
 
-h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
+h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion) -> nom::IResult<&[u8], H3MObjectProperties>>
     // Objects without additional properties
     (2, AltarOfSacrifice, eat_obj_noprops)
     (4, Arena, eat_obj_noprops)
@@ -1532,7 +1524,7 @@ named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate
 //        let bytes = &templates[template_idx as usize].class_subclass;
 //        println!("reading props for {}/{} -> {:?}", make_class(bytes), make_subclass(bytes), class);
 //    }) >>
-    properties: call!(class.to_debug(), version, class) >>
+    properties: call!(class.to_debug(), version) >>
     (H3MObject {
         loc, template_idx, properties
     })

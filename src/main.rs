@@ -327,7 +327,7 @@ enum H3MVictoryCondition {
     AccumCreatures(H3MCreature, u32),
     AccumResources(H3MResource, u32),
     UpgradeTown(H3MLocation, H3MHallLevel, H3MCastleLevel),
-    BuildGrail(H3MLocation),
+    BuildGrail(Option<H3MLocation>),
     DefeatHero(H3MLocation),
     CaptureTown(H3MLocation),
     DefeatMonster(H3MLocation),
@@ -344,7 +344,10 @@ named_args!(eat_victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, swi
                       (H3MVictoryCondition::AccumResources(res, amount))) |
     0x03 => do_parse!(loc: eat_location >> hall: eat_hall_level >> castle: eat_castle_level >>
                       (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
-    0x04 => map!(eat_location, |loc| H3MVictoryCondition::BuildGrail(loc)) |
+    0x04 => map!(alt!(
+        tag!([255u8; 3]) => {|x| None} |
+        call!(eat_location) => {|x| Some(x)}
+    ), |loc| H3MVictoryCondition::BuildGrail(loc)) |
     0x05 => map!(eat_location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
     0x06 => map!(eat_location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
     0x07 => map!(eat_location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
@@ -519,9 +522,10 @@ named_args!(eat_available_heroes(version: H3MVersion)<H3MAvailableHeroes>, do_pa
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 h3m_enum! { <H3MSkillLevel, eat_skill_level, eat_8>
-    (0, Basic)
-    (1, Advanced)
-    (2, Expert)
+    (0, Unspecified)
+    (1, Basic)
+    (2, Advanced)
+    (3, Expert)
 }
 
 h3m_enum! { <H3MHeroGender, eat_hero_gender, eat_8>
@@ -994,6 +998,15 @@ named_args!(eat_obj_artifact(version: H3MVersion, class: H3MObjectClass)<H3MObje
     map!(eat_option!(call!(eat_msg_guards, version)), |guard| H3MObjectProperties::Artifact { guard })
 );
 
+named_args!(eat_obj_scroll(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(
+        guard: eat_option!(call!(eat_msg_guards, version)) >>
+        spell: eat_spell >>
+        _zeros: tag!([0u8; 3]) >>
+        (H3MObjectProperties::Scroll { guard, spell })
+    )
+);
+
 named_args!(eat_obj_witch(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>, map!(
     versions!(version, value!(0x0FFFEFBF), call!(eat_32), call!(eat_32)),
     |skills| H3MObjectProperties::Witch { skills }
@@ -1202,6 +1215,13 @@ named_args!(eat_obj_seer(version: H3MVersion, class: H3MObjectClass)<H3MObjectPr
     )
 );
 
+named_args!(eat_obj_quest_guard(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(
+        quest: versions!(version, call!(eat_quest1), call!(eat_quest2), call!(eat_quest2)) >>
+        (H3MObjectProperties::QuestGuard { quest })
+    )
+);
+
 #[derive(Debug)]
 struct H3MMsgGuardReward {
     guard: Option<H3MMessageAndGuards>,
@@ -1268,6 +1288,7 @@ enum H3MObjectProperties {
     RandomDwellingFaction { owner: H3MColor, level_range: (u8, u8) },
     Resource { guard: Option<H3MMessageAndGuards>, amount: u32 },
     Artifact { guard: Option<H3MMessageAndGuards> },
+    Scroll { guard: Option<H3MMessageAndGuards>, spell: H3MSpell },
     Witch { skills: u32 },
     Shrine { spell: u8 },
     Grail { radius: u32 },
@@ -1276,6 +1297,7 @@ enum H3MObjectProperties {
     AbandonedMine { resources: u8 },
     Garrison { owner: H3MColor, creatures: H3MCreatures, removable: u8 },
     Seer { quest: H3MQuest, reward: H3MReward },
+    QuestGuard { quest: H3MQuest },
     Pandora { contents: H3MMsgGuardReward },
     Event { contents: H3MMsgGuardReward, players_mask: u8, ai_allowed: bool, one_time: bool },
     NoProperties,
@@ -1283,21 +1305,19 @@ enum H3MObjectProperties {
 
 named_args!(eat_obj_noprops(v: H3MVersion, c: H3MObjectClass)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
 
-fn eat_obj_unimpl<'a>(_: &'a[u8], _: H3MVersion, class: H3MObjectClass) -> nom::IResult<&'a[u8], H3MObjectProperties> {
-    panic!("class `{:?}` is not implemented yet", class)
-}
-
 h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MObjectClass) -> nom::IResult<&[u8], H3MObjectProperties>>
-// Objects without additional properties
+    // Objects without additional properties
     (2, AltarOfSacrifice, eat_obj_noprops)
     (4, Arena, eat_obj_noprops)
     (7, BlackMarket, eat_obj_noprops)
+    (8, Boat, eat_obj_noprops)
     (9, BorderGuard, eat_obj_noprops)
     (10, KeymastersTent, eat_obj_noprops)
     (11, Buoy, eat_obj_noprops)
     (12, Campfire, eat_obj_noprops)
     (13, Cartographer, eat_obj_noprops)
     (14, SwanPond, eat_obj_noprops)
+    (15, CoverOfDarkness, eat_obj_noprops)
     (16, CreatureBank, eat_obj_noprops)
     (21, CursedGround1, eat_obj_noprops)
     (22, Corpse, eat_obj_noprops)
@@ -1310,6 +1330,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
     (30, FountainOfFortune, eat_obj_noprops)
     (31, FountainOfYouth, eat_obj_noprops)
     (32, GardenOfRevelation, eat_obj_noprops)
+    (35, HillFort, eat_obj_noprops)
     (37, HutOfMagi, eat_obj_noprops)
     (38, IdolOfFortune, eat_obj_noprops)
     (39, LeanTo, eat_obj_noprops)
@@ -1321,6 +1342,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
     (47, SchoolOfMagic, eat_obj_noprops)
     (48, MagicSpring, eat_obj_noprops)
     (49, MagicWell, eat_obj_noprops)
+    (50, MarketOfTime, eat_obj_noprops)
     (51, MercenaryCamp, eat_obj_noprops)
     (52, Mermaid, eat_obj_noprops)
     (55, MysticalGarden, eat_obj_noprops)
@@ -1379,6 +1401,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
     (143, RiverDelta, eat_obj_noprops)
     (147, Rock, eat_obj_noprops)
     (148, SandDune, eat_obj_noprops)
+    (149, SandPit, eat_obj_noprops)
     (150, Shrub, eat_obj_noprops)
     (151, Skull, eat_obj_noprops)
     (153, Stump, eat_obj_noprops)
@@ -1394,8 +1417,20 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
     (210, SubterraneanRocks, eat_obj_noprops)
     (211, SwampFoliage, eat_obj_noprops)
     (212, BorderGate, eat_obj_noprops)
+    (213, FreelancersGuild, eat_obj_noprops)
+    (221, TradingPostSnow, eat_obj_noprops)
+    (222, Cloverfield, eat_obj_noprops)
+    (223, CursedGround2, eat_obj_noprops)
+    (224, EvilFog, eat_obj_noprops)
+    (225, FavorableWinds, eat_obj_noprops)
+    (226, FieryFields, eat_obj_noprops)
+    (227, HolyGrounds, eat_obj_noprops)
+    (228, LucidPools, eat_obj_noprops)
+    (229, MagicClouds, eat_obj_noprops)
+    (230, MagicPlains2, eat_obj_noprops)
+    (231, RockLands, eat_obj_noprops)
 
-// Objects with additional properties:
+    // Objects with additional properties:
     (5, Artifact, eat_obj_artifact)
     (6, PandorasBox, eat_obj_pandora)
     (17, CreatureGenerator1, eat_obj_owned)
@@ -1411,7 +1446,7 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
     (54, Monster, eat_obj_monster)
     (59, OceanBottle, eat_obj_message)
     (62, Prison, eat_obj_hero)
-    (65, RandomArtifact, eat_obj_unimpl)
+    (65, RandomArtifact, eat_obj_artifact)
     (66, RandomTreasureArtifact, eat_obj_artifact)
     (67, RandomMinorArtifact, eat_obj_artifact)
     (68, RandomMajorArtifact, eat_obj_artifact)
@@ -1432,14 +1467,14 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
     (89, ShrineOfMagicGesture, eat_obj_shrine)
     (90, ShrineOfMagicThought, eat_obj_shrine)
     (91, Sign, eat_obj_message)
-    (93, SpellScroll, eat_obj_unimpl)
+    (93, SpellScroll, eat_obj_scroll)
     (98, Town, eat_obj_town)
     (113, WitchHut, eat_obj_witch)
     (162, RandomMonster5, eat_obj_monster)
     (163, RandomMonster6, eat_obj_monster)
     (164, RandomMonster7, eat_obj_monster)
     (214, HeroPlaceholder, eat_obj_placeholder)
-    (215, QuestGuard, eat_obj_unimpl)
+    (215, QuestGuard, eat_obj_quest_guard)
     (216, RandomDwelling, eat_obj_dwelling)
     (217, RandomDwellingLevel, eat_obj_dwelling_level)
     (218, RandomDwellingFaction, eat_obj_dwelling_faction)
@@ -1481,7 +1516,6 @@ fn make_subclass(inp: &[u8; 8]) -> u32 {
 fn eat_obj_class_or_panic(inp: &[u8; 8]) -> H3MObjectClass {
     match eat_obj_class(inp) {
         nom::IResult::Done(_, class) =>
-
             if let (H3MObjectClass::Mine, 7) = (class, make_subclass(inp)) {
                 H3MObjectClass::AbandonedMine
             } else { class },
@@ -1494,10 +1528,10 @@ named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
     class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class_subclass)) >>
-    _debug: value!({
-        let bytes = &templates[template_idx as usize].class_subclass;
-        println!("reading props for {}/{} -> {:?}", make_class(bytes), make_subclass(bytes), class);
-    }) >>
+//    _debug: value!({
+//        let bytes = &templates[template_idx as usize].class_subclass;
+//        println!("reading props for {}/{} -> {:?}", make_class(bytes), make_subclass(bytes), class);
+//    }) >>
     properties: call!(class.to_debug(), version, class) >>
     (H3MObject {
         loc, template_idx, properties
@@ -1635,7 +1669,7 @@ fn main() {
 
     match res {
         Ok(bin) => {
-            println!("unzipped size: {}", bin.len());
+            // println!("unzipped size: {}", bin.len());
 
             if false {
                 use std::fmt::Write;
@@ -1653,18 +1687,20 @@ fn main() {
 
             match eat_h3m(&bin) {
                 nom::IResult::Done(rem, doc) => {
-                    println!("parsed document: {:#?}", doc);
+                    // println!("parsed document: {:#?}", doc);
 
                     if false {
                         print_map(&doc);
                     }
 
-                    println!("remaining: {:?}", rem.len());
+                    if rem.len() > 0 {
+                        panic!("remaining: {:?}", rem.len());
+                    }
                 }
-                nom::IResult::Error(e) => println!("error: {:#?}", e),
-                nom::IResult::Incomplete(n) => println!("need: {:#?}", n),
+                nom::IResult::Error(e) => panic!("error: {:#?}", e),
+                nom::IResult::Incomplete(n) => panic!("need: {:#?}", n),
             }
         },
-        Err(err) => println!("error: {}", err),
+        Err(err) => panic!("error: {}", err),
     }
 }

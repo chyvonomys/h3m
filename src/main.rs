@@ -934,7 +934,7 @@ enum H3MDwellingFaction {
 
 named!(eat_dwelling_faction<H3MDwellingFaction>,
     switch!(peek!(eat_32),
-        0 => do_parse!(z: eat_32 >> m: eat_16 >> (H3MDwellingFaction::Mask(m))) |
+        0 => do_parse!(_zero: eat_32 >> m: eat_16 >> (H3MDwellingFaction::Mask(m))) |
         _ => map!(eat_32, |t| H3MDwellingFaction::SameAsTown(t))
     )
 );
@@ -1507,7 +1507,7 @@ fn make_subclass(inp: &[u8; 8]) -> u32 {
 
 fn eat_obj_class_or_panic(inp: &[u8; 8]) -> H3MObjectClass {
     match eat_obj_class(inp) {
-        nom::IResult::Done(_, class) =>
+        Ok((_, class)) =>
             if let (H3MObjectClass::Mine, 7) = (class, make_subclass(inp)) {
                 H3MObjectClass::AbandonedMine
             } else { class },
@@ -1678,7 +1678,7 @@ fn main() {
             }
 
             match eat_h3m(&bin) {
-                nom::IResult::Done(rem, doc) => {
+                Ok((rem, doc)) => {
                     // println!("parsed document: {:#?}", doc);
 
                     if false {
@@ -1689,8 +1689,7 @@ fn main() {
                         panic!("remaining: {:?}", rem.len());
                     }
                 }
-                nom::IResult::Error(e) => panic!("error: {:#?}", e),
-                nom::IResult::Incomplete(n) => panic!("need: {:#?}", n),
+                Err(e) => panic!("error: {:#?}", e),
             }
         },
         Err(err) => panic!("error: {}", err),

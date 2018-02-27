@@ -4,6 +4,6 @@ version = "0.1.0"
 authors = ["Andriy S. on cobalt <sima.rv@gmail.com>"]
 
 [dependencies]
-nom = "3.2.1"
-flate2 = "1.0.1"
+nom = "4.0.0-beta1"
+flate2 = "*"
 colored = "*"

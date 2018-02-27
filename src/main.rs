@@ -24,12 +24,20 @@ macro_rules! eat_option (
     );
 );
 
-macro_rules! versions (
-    ($i:expr, $v:expr, $roe:ident!( $($roe_args:tt)* ), $ab:ident!( $($ab_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
+macro_rules! sod (
+    ($i:expr, $v:expr, $old:ident!( $($old_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
+        switch!($i, value!($v),
+            H3MVersion::SoD => $sod!($($sod_args)*) |
+            _ => $old!($($old_args)*)
+        )
+    );
+);
+
+macro_rules! roe (
+    ($i:expr, $v:expr, $roe:ident!( $($roe_args:tt)* ), $new:ident!( $($new_args:tt)* )) => (
         switch!($i, value!($v),
             H3MVersion::RoE => $roe!($($roe_args)*) |
-            H3MVersion::AB => $ab!($($ab_args)*) |
-            H3MVersion::SoD => $sod!($($sod_args)*)
+            _ => $new!($($new_args)*)
         )
     );
 );
@@ -46,7 +54,7 @@ macro_rules! h3m_enum {
         ));
 
         impl $t {
-            fn to_debug(&self) -> $d {
+            fn map(&self) -> $d {
                 match *self {
                     $t::$x0 => $o0 $( , $t::$x => $o )*
                 }
@@ -126,10 +134,10 @@ struct H3MHeader {
 
 impl H3MHeader {
     fn get_width(&self) -> usize {
-        self.size.to_debug()
+        self.size.map()
     }
     fn get_height(&self) -> usize {
-        self.size.to_debug()
+        self.size.map()
     }
 }
 
@@ -141,7 +149,7 @@ named!(eat_header<H3MHeader>, do_parse!(
     name: eat_string >>
     description: eat_string >>
     difficulty: eat_difficulty >>
-    level_cap: versions!(version, value!(0u8), call!(eat_8), call!(eat_8)) >>
+    level_cap: roe!(version, value!(0u8), call!(eat_8)) >>
     (H3MHeader {
         version,
         has_players,
@@ -212,8 +220,8 @@ struct H3MMainTown {
 }
 
 named_args!(eat_main_town(version: H3MVersion)<H3MMainTown>, do_parse!(
-    generate_hero: versions!(version, value!(true), call!(eat_flag), call!(eat_flag)) >>
-    kind: versions!(version, value!(H3MTownKind::Random), call!(eat_town_kind), call!(eat_town_kind)) >>
+    generate_hero: roe!(version, value!(true), call!(eat_flag)) >>
+    kind: roe!(version, value!(H3MTownKind::Random), call!(eat_town_kind)) >>
     location: eat_location >>
     (H3MMainTown {
         generate_hero, kind, location,
@@ -250,7 +258,7 @@ named!(eat_artifact1<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i as u16)));
 named!(eat_artifact2<H3MArtifact>, map!(eat_16, |i| H3MArtifact(i)));
 
 named_args!(eat_artifact(version: H3MVersion)<H3MArtifact>,
-    versions!(version, call!(eat_artifact1), call!(eat_artifact2), call!(eat_artifact2))
+    roe!(version, call!(eat_artifact1), call!(eat_artifact2))
 );
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -290,7 +298,7 @@ named!(eat_creature1<H3MCreature>, map!(eat_8, |i| H3MCreature(i as u16)));
 named!(eat_creature2<H3MCreature>, map!(eat_16, |i| H3MCreature(i)));
 
 named_args!(eat_creature(version: H3MVersion)<H3MCreature>,
-    versions!(version, call!(eat_creature1), call!(eat_creature2), call!(eat_creature2))
+    roe!(version, call!(eat_creature1), call!(eat_creature2))
 );
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -407,30 +415,26 @@ named!(eat_player_playability<H3MPlayerPlayability>, do_parse!(
 struct H3MPlayerAllowedAlignments {
     unknown: bool, // SoD
     mask: u8,
-    mask_ext: u8,
+    mask_ext: u8, // AB/SoD
     random: bool,
-}
-
-impl Default for H3MPlayerAllowedAlignments {
-    fn default() -> Self {
-        Self { unknown: false, mask: 0u8, mask_ext: 0u8, random: false }
-    }
 }
 
 named_args!(eat_player_allowed_alignments(version: H3MVersion, playable: bool)<H3MPlayerAllowedAlignments>,
     switch!(value!(playable),
         true => do_parse!(
-            unknown: versions!(version, value!(false), value!(false), call!(eat_flag)) >>
+            unknown: sod!(version, value!(false), call!(eat_flag)) >>
             mask: eat_8 >>
-            mask_ext: versions!(version, value!(0u8), call!(eat_8), call!(eat_8)) >>
+            mask_ext: roe!(version, value!(0u8), call!(eat_8)) >>
             random: eat_flag >>
             (H3MPlayerAllowedAlignments {
                 unknown, mask, mask_ext, random,
             })
         ) |
-        false => value!(H3MPlayerAllowedAlignments::default(), versions!(version, take!(2), take!(3), take!(4)))
+        false => value!(
+            H3MPlayerAllowedAlignments { unknown: false, mask: 0u8, mask_ext: 0u8, random: false },
+            take!(match version { H3MVersion::RoE => 2, H3MVersion::AB => 3, H3MVersion::SoD => 4 })
+        )
         // NOTE: if player is not playable, this contains junk, just eat it
-        // TODO: this number is 3 for RoE & AB
     )
 );
 
@@ -458,12 +462,8 @@ named_args!(eat_player(version: H3MVersion)<H3MPlayer>, do_parse!(
         0xFFu8 => value!(None) |
         _ => map!(eat_hero, |x| Some(x))
     ) >>
-    num_placeholders: versions!(version,
-        value!(0u8), call!(eat_8), call!(eat_8)
-    ) >>
-    heroes: versions!(version,
-        value!(Vec::default()), length_count!(eat_32, eat_hero), length_count!(eat_32, eat_hero)
-    ) >>
+    num_placeholders: roe!(version, value!(0u8), call!(eat_8)) >>
+    heroes: roe!(version, value!(Vec::default()), length_count!(eat_32, eat_hero)) >>
     (H3MPlayer {
         playability,
         allowed_alignments,
@@ -505,9 +505,9 @@ struct H3MAvailableHeroes {
 
 named_args!(eat_available_heroes(version: H3MVersion)<H3MAvailableHeroes>, do_parse!(
     mask: count_fixed!(u8, eat_8, 16) >>
-    mask_ext: versions!(version, value!([0u8; 4]), count_fixed!(u8, eat_8, 4), count_fixed!(u8, eat_8, 4)) >>
-    _zeroes: versions!(version, value!(()), value!((), tag!([0u8; 4])), value!((), tag!([0u8; 4]))) >>
-    settings: versions!(version, value!(Vec::default()), value!(Vec::default()), length_count!(eat_8, eat_hero_availability)) >>
+    mask_ext: roe!(version, value!([0u8; 4]), count_fixed!(u8, eat_8, 4)) >>
+    _zeroes: roe!(version, value!(()), value!((), tag!([0u8; 4]))) >>
+    settings: sod!(version, value!(Vec::default()), length_count!(eat_8, eat_hero_availability)) >>
     (H3MAvailableHeroes {
         mask, mask_ext, settings,
     })
@@ -583,7 +583,7 @@ named_args!(eat_hero_equipment(version: H3MVersion)<H3MHeroEquipment>, do_parse!
     machine3: call!(eat_artifact, version) >>
     machine4: call!(eat_artifact, version) >>
     spellbook: call!(eat_artifact, version) >>
-    misc5: versions!(version, value!(H3MArtifact(0xFFFF)), value!(H3MArtifact(0xFFFF)), call!(eat_artifact2)) >>
+    misc5: sod!(version, value!(H3MArtifact(0xFFFF)), call!(eat_artifact2)) >>
     backpack: length_count!(eat_16, call!(eat_artifact, version)) >>
     (H3MHeroEquipment {
         head, shoulders, neck,
@@ -813,29 +813,29 @@ named_args!(eat_town_event(version: H3MVersion)<H3MTownEvent>, do_parse!(
 
 #[derive(Debug)]
 struct H3MObjectTown {
-    id: u32,
+    id: u32, // AB/SoD
     owner: H3MColor,
     name: Option<String>,
     garrison: Option<H3MCreatures>,
     group_formation: bool,
     buildings: H3MBuildings,
-    forced_spells: H3MSpellsMask,
+    forced_spells: H3MSpellsMask, // AB/SoD
     allowed_spells: H3MSpellsMask,
     events: Vec<H3MTownEvent>,
-    alignment: u8,
+    alignment: u8, // SoD
 }
 
 named_args!(eat_obj_town(version: H3MVersion)<H3MObjectProperties>, do_parse!(
-    id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
+    id: roe!(version, value!(0xFFFFFFFF), call!(eat_32)) >>
     owner: eat_color >>
     name: eat_option!(eat_string) >>
     garrison: eat_option!(call!(eat_creatures, version)) >>
     group_formation: eat_flag >>
     buildings: eat_buildings >>
-    forced_spells: versions!(version, value!(H3MSpellsMask::default()), call!(eat_spells_mask), call!(eat_spells_mask)) >>
+    forced_spells: roe!(version, value!(H3MSpellsMask::default()), call!(eat_spells_mask)) >>
     allowed_spells: eat_spells_mask >>
     events: length_count!(eat_32, call!(eat_town_event, version)) >>
-    alignment: versions!(version, value!(0u8), value!(0u8), call!(eat_8)) >>
+    alignment: sod!(version, value!(0u8), call!(eat_8)) >>
     _zeroes: tag!([0u8; 3]) >>
     (H3MObjectProperties::Town(H3MObjectTown{
         id, owner, name, garrison, group_formation, buildings,
@@ -858,26 +858,30 @@ struct H3MObjectHero {
     patrol_radius: u8,
     bio: Option<String>, // AB/SoD
     gender: H3MHeroGender, // AB/SoD
-    spells: Option<H3MSpellsMask>, // AB'/SoD // TODO: check that one spell
+    spells: Option<H3MSpellsMask>, // AB'/SoD // TODO: set that one spell
     stats: Option<(u8, u8, u8, u8)>, // SoD
 }
 
 named_args!(eat_obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
-    id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
+    id: roe!(version, value!(0xFFFFFFFF), call!(eat_32)) >>
     owner: eat_color >>
     hero_type: eat_8 >>
     name: eat_option!(eat_string) >>
-    exp: versions!(version, map!(eat_32, |x| Some(x)), map!(eat_32, |x| Some(x)), eat_option!(eat_32)) >>
+    exp: sod!(version, map!(eat_32, |x| Some(x)), eat_option!(eat_32)) >>
     face: eat_option!(eat_8) >>
     skills: eat_option!(length_count!(eat_32, tuple!(eat_skill, eat_skill_level))) >>
     garrison: eat_option!(call!(eat_creatures, version)) >>
     group_formation: eat_flag >>
     equipment: eat_option!(call!(eat_hero_equipment, version)) >>
     patrol_radius: eat_8 >>
-    bio: versions!(version, value!(None), eat_option!(eat_string), eat_option!(eat_string)) >>
-    gender: versions!(version, value!(H3MHeroGender::Default), call!(eat_hero_gender), call!(eat_hero_gender)) >>
-    spells: versions!(version, value!(None), value!(None, eat_8), eat_option!(eat_spells_mask)) >>
-    stats: versions!(version, value!(None), value!(None), eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8))) >>
+    bio: roe!(version, value!(None), eat_option!(eat_string)) >>
+    gender: roe!(version, value!(H3MHeroGender::Default), call!(eat_hero_gender)) >>
+    spells: switch!(value!(version),
+                    H3MVersion::RoE => value!(None) |
+                    H3MVersion::AB => value!(None, eat_8) |
+                    H3MVersion::SoD => eat_option!(eat_spells_mask)
+    ) >>
+    stats: sod!(version, value!(None), eat_option!(tuple!(eat_8, eat_8, eat_8, eat_8))) >>
     _zeros: tag!([0u8; 16]) >>
     (H3MObjectProperties::Hero(H3MObjectHero {
         id, owner, hero_type, name, exp, face, skills, garrison, group_formation,
@@ -896,7 +900,7 @@ struct H3MObjectMonster {
 }
 
 named_args!(eat_obj_monster(version: H3MVersion)<H3MObjectProperties>, do_parse!(
-    id: versions!(version, value!(0xFFFFFFFF), call!(eat_32), call!(eat_32)) >>
+    id: roe!(version, value!(0xFFFFFFFF), call!(eat_32)) >>
     quantity: eat_16 >>
     mood: eat_8 >>
     reward: eat_option!(tuple!(eat_string, eat_resources, call!(eat_artifact, version))) >>
@@ -1002,7 +1006,7 @@ named_args!(eat_obj_scroll(version: H3MVersion)<H3MObjectProperties>,
 );
 
 named_args!(eat_obj_witch(version: H3MVersion)<H3MObjectProperties>, map!(
-    versions!(version, value!(0x0FFFEFBF), call!(eat_32), call!(eat_32)),
+    roe!(version, value!(0x0FFFEFBF), call!(eat_32)),
     |skills| H3MObjectProperties::Witch { skills }
 ));
 
@@ -1036,7 +1040,7 @@ named_args!(eat_obj_garrison(version: H3MVersion)<H3MObjectProperties>,
         owner: eat_color >>
         _zeroes1: tag!([0u8; 3]) >>
         creatures: call!(eat_creatures, version) >>
-        removable: versions!(version, value!(0u8), call!(eat_8), call!(eat_8)) >> // TODO: bool?
+        removable: roe!(version, value!(0u8), call!(eat_8)) >> // TODO: bool?
         _zeroes2: tag!([0u8; 8]) >>
         (H3MObjectProperties::Garrison {
             owner, creatures, removable
@@ -1200,7 +1204,7 @@ named!(eat_quest2<H3MQuest>,
 
 named_args!(eat_obj_seer(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
-        quest: versions!(version, call!(eat_quest1), call!(eat_quest2), call!(eat_quest2)) >>
+        quest: roe!(version, call!(eat_quest1), call!(eat_quest2)) >>
         reward: call!(eat_reward, version) >>
         _zeroes: tag!([0u8; 2]) >>
         (H3MObjectProperties::Seer { quest, reward })
@@ -1209,7 +1213,7 @@ named_args!(eat_obj_seer(version: H3MVersion)<H3MObjectProperties>,
 
 named_args!(eat_obj_quest_guard(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
-        quest: versions!(version, call!(eat_quest1), call!(eat_quest2), call!(eat_quest2)) >>
+        quest: roe!(version, call!(eat_quest1), call!(eat_quest2)) >>
         (H3MObjectProperties::QuestGuard { quest })
     )
 );
@@ -1524,7 +1528,7 @@ named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate
 //        let bytes = &templates[template_idx as usize].class_subclass;
 //        println!("reading props for {}/{} -> {:?}", make_class(bytes), make_subclass(bytes), class);
 //    }) >>
-    properties: call!(class.to_debug(), version) >>
+    properties: call!(class.map(), version) >>
     (H3MObject {
         loc, template_idx, properties
     })
@@ -1547,7 +1551,7 @@ named_args!(eat_event(version: H3MVersion)<H3MEvent>, do_parse!(
     text: eat_string >>
     resources: eat_resources >>
     unknown1: eat_8 >>
-    unknown2: versions!(version, value!(true), value!(true), call!(eat_flag)) >>
+    unknown2: sod!(version, value!(true), call!(eat_flag)) >>
     unknown3: eat_flag >>
     first_occurence: eat_16 >>
     repeat_period: eat_16 >>
@@ -1591,12 +1595,12 @@ named!(eat_h3m<H3MFile>, do_parse!(
     ) >>
     available_heroes: call!(eat_available_heroes, header.version) >>
     _zeroes: tag!([0u8; 31]) >>
-    banned_artifacts: versions!(header.version, value!([0u8; 17]), count_fixed!(u8, eat_8, 17), count_fixed!(u8, eat_8, 17)) >>
-    banned_artifacts_ext: versions!(header.version, value!(31u8), value!(31u8), call!(eat_8)) >>
-    banned_spells: versions!(header.version, value!(H3MSpellsMask::default()), value!(H3MSpellsMask::default()), call!(eat_spells_mask)) >>
-    banned_skills: versions!(header.version, value!(0u32), value!(0u32), call!(eat_32)) >>
+    banned_artifacts: roe!(header.version, value!([0u8; 17]), count_fixed!(u8, eat_8, 17)) >>
+    banned_artifacts_ext: sod!(header.version, value!(31u8), call!(eat_8)) >>
+    banned_spells: sod!(header.version, value!(H3MSpellsMask::default()), call!(eat_spells_mask)) >>
+    banned_skills: sod!(header.version, value!(0u32), call!(eat_32)) >>
     rumors: length_count!(eat_32, tuple!(eat_string, eat_string)) >>
-    heroes: count!(versions!(header.version, value!(None), value!(None), eat_option!(eat_hero_customization)), 156) >>
+    heroes: count!(sod!(header.version, value!(None), eat_option!(eat_hero_customization)), 156) >>
     land: count!(eat_tile, header.get_width() * header.get_height()) >>
     underground: switch!(value!(header.has_underground),
         false => value!(None) |
@@ -1629,7 +1633,7 @@ fn print_map(doc: &H3MFile) {
                 if let H3MRoadType::RdNone = tile.road_type {
                     line.push_str("...");
                 } else {
-                    let pat = tile.road_topo.to_debug();
+                    let pat = tile.road_topo.map();
                     let base = 3 * if tile.flip_road_x { [2, 1, 0] } else { [0, 1, 2] } [sub];
                     if tile.flip_road_y {
                         line.push(pat[base + 2] as char);
@@ -1641,7 +1645,7 @@ fn print_map(doc: &H3MFile) {
                         line.push(pat[base + 2] as char);
                     }
                 }
-                print!("{}", line.color(tile.terrain.to_debug()))
+                print!("{}", line.color(tile.terrain.map()))
             }
             println!();
         }

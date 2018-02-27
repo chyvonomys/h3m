@@ -1203,6 +1203,60 @@ named_args!(eat_obj_seer(version: H3MVersion, class: H3MObjectClass)<H3MObjectPr
 );
 
 #[derive(Debug)]
+struct H3MMsgGuardReward {
+    guard: Option<H3MMessageAndGuards>,
+    exp: u32,
+    spell_points: u32,
+    morale: H3MModifier,
+    luck: H3MModifier,
+    resources: H3MResources,
+    stats: (u8, u8, u8, u8),
+    skills: Vec<(H3MSkill, H3MSkillLevel)>,
+    artifacts: Vec<H3MArtifact>,
+    spells: Vec<H3MSpell>,
+    creatures: Vec<(H3MCreature, u16)>,
+}
+
+named_args!(eat_msg_guard_reward(version: H3MVersion)<H3MMsgGuardReward>,
+    do_parse!(
+        guard: eat_option!(call!(eat_msg_guards, version)) >>
+        exp: eat_32 >>
+        spell_points: eat_32 >>
+        morale: eat_modifier >>
+        luck: eat_modifier >>
+        resources: eat_resources >>
+        stats: tuple!(eat_8, eat_8, eat_8, eat_8) >>
+        skills: length_count!(eat_8, tuple!(eat_skill, eat_skill_level)) >>
+        artifacts: length_count!(eat_8, call!(eat_artifact, version)) >>
+        spells: length_count!(eat_8, eat_spell) >>
+        creatures: length_count!(eat_8, tuple!(call!(eat_creature, version), eat_16)) >>
+        _zeroes: tag!([0u8; 8]) >>
+        (H3MMsgGuardReward {
+            guard, exp, spell_points, morale, luck,
+            resources, stats, skills, artifacts, spells, creatures,
+        })
+    )
+);
+
+named_args!(eat_obj_pandora(version: H3MVersion, _c: H3MObjectClass)<H3MObjectProperties>, map!(
+    call!(eat_msg_guard_reward, version),
+    |contents| H3MObjectProperties::Pandora { contents }
+));
+
+named_args!(eat_obj_event(version: H3MVersion, class: H3MObjectClass)<H3MObjectProperties>,
+    do_parse!(
+        contents: call!(eat_msg_guard_reward, version) >>
+        players_mask: eat_8 >>
+        ai_allowed: eat_flag >>
+        one_time: eat_flag >>
+        _zeroes: tag!([0u8; 4]) >>
+        (H3MObjectProperties::Event {
+            contents, players_mask, ai_allowed, one_time
+        })
+    )
+);
+
+#[derive(Debug)]
 enum H3MObjectProperties {
     Hero(H3MObjectHero),
     Monster(H3MObjectMonster),
@@ -1222,6 +1276,8 @@ enum H3MObjectProperties {
     AbandonedMine { resources: u8 },
     Garrison { owner: H3MColor, creatures: H3MCreatures, removable: u8 },
     Seer { quest: H3MQuest, reward: H3MReward },
+    Pandora { contents: H3MMsgGuardReward },
+    Event { contents: H3MMsgGuardReward, players_mask: u8, ai_allowed: bool, one_time: bool },
     NoProperties,
 }
 
@@ -1341,12 +1397,12 @@ h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion, H3MOb
 
 // Objects with additional properties:
     (5, Artifact, eat_obj_artifact)
-    (6, PandorasBox, eat_obj_unimpl)
+    (6, PandorasBox, eat_obj_pandora)
     (17, CreatureGenerator1, eat_obj_owned)
     (18, CreatureGenerator2, eat_obj_owned)
     (19, CreatureGenerator3, eat_obj_owned)
     (20, CreatureGenerator4, eat_obj_owned)
-    (26, Event, eat_obj_unimpl)
+    (26, Event, eat_obj_event)
     (33, Garrison, eat_obj_garrison)
     (34, Hero, eat_obj_hero)
     (36, Grail, eat_obj_grail)

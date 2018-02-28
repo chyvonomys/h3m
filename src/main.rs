@@ -1,3 +1,4 @@
+extern crate clap;
 extern crate flate2;
 extern crate colored;
 use colored::Colorize;
@@ -254,7 +255,7 @@ impl std::fmt::Debug for H3MResources {
 #[derive(Debug)]
 struct H3MArtifact(u16);
 
-named!(eat_artifact1<H3MArtifact>, map!(eat_8, |i| H3MArtifact(i as u16)));
+named!(eat_artifact1<H3MArtifact>, map!(eat_8, |i| H3MArtifact(if i == 0xFF { 0xFFFF } else { i as u16 })));
 named!(eat_artifact2<H3MArtifact>, map!(eat_16, |i| H3MArtifact(i)));
 
 named_args!(eat_artifact(version: H3MVersion)<H3MArtifact>,
@@ -294,7 +295,7 @@ h3m_enum! { <H3MCastleLevel, eat_castle_level, eat_8>
 #[derive(Debug, Clone, Copy)]
 struct H3MCreature(u16);
 
-named!(eat_creature1<H3MCreature>, map!(eat_8, |i| H3MCreature(i as u16)));
+named!(eat_creature1<H3MCreature>, map!(eat_8, |i| H3MCreature(if i == 0xFF { 0xFFFF } else { i as u16 })));
 named!(eat_creature2<H3MCreature>, map!(eat_16, |i| H3MCreature(i)));
 
 named_args!(eat_creature(version: H3MVersion)<H3MCreature>,
@@ -348,7 +349,7 @@ named_args!(eat_victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, swi
                       (H3MVictoryCondition::AccumResources(res, amount))) |
     0x03 => do_parse!(loc: eat_location >> hall: eat_hall_level >> castle: eat_castle_level >>
                       (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
-    0x04 => map!(alt!(tag!([255u8; 3]) => { |_| None } | call!(eat_location) => { |x| Some(x) }),
+    0x04 => map!(alt!(tag!([0xFF; 3]) => { |_| None } | call!(eat_location) => { |x| Some(x) }),
         |loc| H3MVictoryCondition::BuildGrail(loc)) |
     0x05 => map!(eat_location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
     0x06 => map!(eat_location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
@@ -424,7 +425,7 @@ named_args!(eat_player_allowed_alignments(version: H3MVersion, playable: bool)<H
         true => do_parse!(
             unknown: sod!(version, value!(false), call!(eat_flag)) >>
             mask: eat_8 >>
-            mask_ext: roe!(version, value!(0u8), call!(eat_8)) >>
+            mask_ext: roe!(version, value!(1u8), call!(eat_8)) >>
             random: eat_flag >>
             (H3MPlayerAllowedAlignments {
                 unknown, mask, mask_ext, random,
@@ -505,7 +506,7 @@ struct H3MAvailableHeroes {
 
 named_args!(eat_available_heroes(version: H3MVersion)<H3MAvailableHeroes>, do_parse!(
     mask: count_fixed!(u8, eat_8, 16) >>
-    mask_ext: roe!(version, value!([0u8; 4]), count_fixed!(u8, eat_8, 4)) >>
+    mask_ext: roe!(version, value!([0xFF, 0xFF, 1, 0]), count_fixed!(u8, eat_8, 4)) >>
     _zeroes: roe!(version, value!(()), value!((), tag!([0u8; 4]))) >>
     settings: sod!(version, value!(Vec::default()), length_count!(eat_8, eat_hero_availability)) >>
     (H3MAvailableHeroes {
@@ -835,7 +836,7 @@ named_args!(eat_obj_town(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     forced_spells: roe!(version, value!(H3MSpellsMask::default()), call!(eat_spells_mask)) >>
     allowed_spells: eat_spells_mask >>
     events: length_count!(eat_32, call!(eat_town_event, version)) >>
-    alignment: sod!(version, value!(0u8), call!(eat_8)) >>
+    alignment: sod!(version, value!(0xFF), call!(eat_8)) >>
     _zeroes: tag!([0u8; 3]) >>
     (H3MObjectProperties::Town(H3MObjectTown{
         id, owner, name, garrison, group_formation, buildings,
@@ -1040,7 +1041,7 @@ named_args!(eat_obj_garrison(version: H3MVersion)<H3MObjectProperties>,
         owner: eat_color >>
         _zeroes1: tag!([0u8; 3]) >>
         creatures: call!(eat_creatures, version) >>
-        removable: roe!(version, value!(0u8), call!(eat_8)) >> // TODO: bool?
+        removable: roe!(version, value!(1u8), call!(eat_8)) >> // TODO: meaning, bool?
         _zeroes2: tag!([0u8; 8]) >>
         (H3MObjectProperties::Garrison {
             owner, creatures, removable
@@ -1653,21 +1654,28 @@ fn print_map(doc: &H3MFile) {
 }
 
 fn main() {
+    let matches = clap::App::new("h3m")
+        .arg(clap::Arg::with_name("binflag").short("b").long("bin"))
+        .arg(clap::Arg::with_name("drawflag").short("m").long("map"))
+        .arg(clap::Arg::with_name("printflag").short("p").long("print"))
+        .arg(clap::Arg::with_name("INPUT").required(true).index(1))
+        .get_matches();
+
     let read_file = |f| {
         let br = BufReader::new(f);
         let mut buf: Vec<u8> = Vec::new();
         GzDecoder::new(br).read_to_end(&mut buf).map(move |_| buf)
     };
 
-    let argument = std::env::args().nth(1).ok_or("no arguments specified".to_owned());
-
-    let res = argument.and_then(|p| File::open(p).and_then(read_file).map_err(|e| e.to_string()));
+    let res = matches.value_of("INPUT").ok_or("no input".to_owned()).and_then(
+        |p| File::open(p)
+            .and_then(read_file)
+            .map_err(|e| e.to_string())
+    );
 
     match res {
         Ok(bin) => {
-            // println!("unzipped size: {}", bin.len());
-
-            if false {
+            if matches.is_present("binflag") {
                 use std::fmt::Write;
                 let mut dump = String::new();
                 let mut count: usize = 0;
@@ -1678,14 +1686,17 @@ fn main() {
                         dump.push_str("\n");
                     }
                 }
-                println!("\n{}", dump);
+
+                println!("unzipped size: {}\n{}", bin.len(), dump);
             }
 
             match eat_h3m(&bin) {
                 Ok((rem, doc)) => {
-                    // println!("parsed document: {:#?}", doc);
+                    if matches.is_present("printflag") {
+                        println!("parsed document: {:#?}", doc);
+                    }
 
-                    if false {
+                    if matches.is_present("drawflag") {
                         print_map(&doc);
                     }
 

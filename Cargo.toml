@@ -7,3 +7,4 @@ authors = ["Andriy S. on cobalt <sima.rv@gmail.com>"]
 nom = "4.0.0-beta1"
 flate2 = "*"
 colored = "*"
+clap = "*"

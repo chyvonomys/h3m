@@ -762,7 +762,8 @@ struct H3MObjectTemplate {
     shape_mask: [u8; 6],
     visit_mask: [u8; 6],
     terrain_type_mask: u32,
-    class_subclass: [u8; 8], // TODO:
+    class: H3MObjectClass,
+    subclass: u32,
     group: u8,
     is_overlay: bool,
 }
@@ -772,13 +773,17 @@ named!(eat_object_template<H3MObjectTemplate>, do_parse!(
     shape_mask: count_fixed!(u8, eat_8, 6) >>
     visit_mask: count_fixed!(u8, eat_8, 6) >>
     terrain_type_mask: eat_32 >>
-    class_subclass: count_fixed!(u8, eat_8, 8) >>
+    class: eat_obj_class >>
+    subclass: eat_32 >>
     group: eat_8 >>
     is_overlay: eat_flag >>
     _zeroes: tag!([0u8; 16]) >>
     (H3MObjectTemplate {
         filename, shape_mask, visit_mask, terrain_type_mask,
-        class_subclass, group, is_overlay,
+        class: if let (H3MObjectClass::Mine, 7) = (class, subclass) {
+            H3MObjectClass::AbandonedMine
+        } else { class },
+        subclass, group, is_overlay,
     })
 ));
 
@@ -1493,44 +1498,11 @@ struct H3MObject {
     properties: H3MObjectProperties,
 }
 
-fn make_class(inp: &[u8; 8]) -> u32 {
-    let mut id = inp[0] as u32;
-    id += (inp[1] as u32) << 8;
-    id += (inp[2] as u32) << 16;
-    id += (inp[3] as u32) << 24;
-
-    id
-}
-
-fn make_subclass(inp: &[u8; 8]) -> u32 {
-    let mut subid = inp[4] as u32;
-    subid += (inp[5] as u32) << 8;
-    subid += (inp[6] as u32) << 16;
-    subid += (inp[7] as u32) << 24;
-
-    subid
-}
-
-fn eat_obj_class_or_panic(inp: &[u8; 8]) -> H3MObjectClass {
-    match eat_obj_class(inp) {
-        Ok((_, class)) =>
-            if let (H3MObjectClass::Mine, 7) = (class, make_subclass(inp)) {
-                H3MObjectClass::AbandonedMine
-            } else { class },
-        _ => panic!("error parsing class: {}", make_class(inp)),
-    }
-}
-
 named_args!(eat_object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
     loc: eat_location >>
     template_idx: eat_32 >>
     _zeroes: tag!([0u8; 5]) >>
-    class: value!(eat_obj_class_or_panic(&templates[template_idx as usize].class_subclass)) >>
-//    _debug: value!({
-//        let bytes = &templates[template_idx as usize].class_subclass;
-//        println!("reading props for {}/{} -> {:?}", make_class(bytes), make_subclass(bytes), class);
-//    }) >>
-    properties: call!(class.map(), version) >>
+    properties: call!(templates[template_idx as usize].class.map(), version) >>
     (H3MObject {
         loc, template_idx, properties
     })

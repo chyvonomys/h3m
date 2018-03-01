@@ -1054,6 +1054,9 @@ h3m_enum! { <u8, H3MSkill, eat_skill, eat_8>
 }
 
 h3m_enum! { <u8, H3MModifier, eat_modifier, eat_8>
+    (253, Minus3)
+    (254, Minus2)
+    (255, Minus1)
     (0, NoChange)
     (1, Plus1)
     (2, Plus2)
@@ -1070,8 +1073,8 @@ enum H3MReward {
     Nothing,
     Exp(u32),
     SpellPoints(u32),
-    Morale(H3MModifier),
-    Luck(H3MModifier),
+    Morale(H3MModifier), // TODO: check if full range is accepted here
+    Luck(H3MModifier),   // ui shows only positive choices
     Resource(H3MResource, u32),
     Stat(H3MStat, u8),
     Skill(H3MSkill, H3MSkillLevel),
@@ -1276,7 +1279,7 @@ enum H3MObjectProperties {
     RandomDwelling { owner: H3MColor, faction: H3MDwellingFaction, level_range: (u8, u8) },
     RandomDwellingLevel { owner: H3MColor, faction: H3MDwellingFaction },
     RandomDwellingFaction { owner: H3MColor, level_range: (u8, u8) },
-    Resource { guard: Option<H3MMessageAndGuards>, amount: u32 },
+    Resource { guard: Option<H3MMessageAndGuards>, amount: u32 }, // TODO: amount `0`
     Artifact { guard: Option<H3MMessageAndGuards> },
     Scroll { guard: Option<H3MMessageAndGuards>, spell: H3MSpell },
     Witch { skills: u32 },
@@ -1345,7 +1348,7 @@ h3m_enum! { <u32, H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion) 
     (47, SchoolOfMagic, eat_obj_noprops)
     (48, MagicSpring, eat_obj_noprops)
     (49, MagicWell, eat_obj_noprops)
-
+    (50, Unknown, eat_obj_noprops) // TODO: Titans Winter.h3m
     (51, MercenaryCamp, eat_obj_noprops)
     (52, Mermaid, eat_obj_noprops)
     (53, Mine, eat_obj_owned) //

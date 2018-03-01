@@ -44,39 +44,41 @@ macro_rules! roe (
 );
 
 macro_rules! h3m_enum {
-    ( <$t:ident, $f:ident, $p:ident, $d:ty> ($i0:expr, $x0:ident, $o0:expr) $( ($i:expr, $x:ident, $o:expr) )* ) => (
+    ( <$t:ty, $u:ident, $f:ident, $p:ident> $( ($x:expr, $y:ident) )* ) => (
         #[derive(Debug)]
-        enum $t {
-            $x0 $( , $x )*
+        enum $u {
+            $( $y, )*
         }
 
-        named!($f<$t>, switch!($p,
-            $i0 => value!($t::$x0) $( | $i => value!($t::$x) )*
-        ));
-
-        impl $t {
-            fn map(&self) -> $d {
-                match *self {
-                    $t::$x0 => $o0 $( , $t::$x => $o )*
+        impl $u {
+            fn read(x: $t) -> Option<$u> {
+                match x {
+                    $( $x => Some($u::$y), )*
+                        _ => None
                 }
             }
         }
-    );
-    ( <$t:ident, $f:ident, $p:ident> ($i0:expr, $x0:ident) $( ($i:expr, $x:ident) )* ) => (
-        #[derive(Debug)]
-        enum $t {
-            $x0 $( , $x )*
-        }
 
-        named!($f<$t>, switch!($p,
-            $i0 => value!($t::$x0) $( | $i => value!($t::$x) )*
-        ));
+        named! { $f<$u>, do_parse!(x: $p >> y: expr_opt!($u::read(x)) >> (y)) }
+
+    );
+    ( <$t:ty, $u:ident, $f:ident, $p:ident, $v:ty> $( ($x:expr, $y:ident, $z:expr) )* ) => (
+
+        h3m_enum! { <$t, $u, $f, $p>  $( ($x, $y) )* }
+
+        impl $u {
+            fn map(&self) -> $v {
+                match *self {
+                    $( $u::$y => $z, )*
+                }
+            }
+        }
     );
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MVersion, eat_version, eat_32>
+h3m_enum! { <u32, H3MVersion, eat_version, eat_32>
     (0x0000000E, RoE)
     (0x00000015, AB)
     (0x0000001C, SoD)
@@ -102,7 +104,7 @@ named!(eat_string<String>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MSize, eat_size, eat_32, usize>
+h3m_enum! { <u32, H3MSize, eat_size, eat_32, usize>
     (36, S, 36)
     (72, M, 72)
     (108, L, 108)
@@ -111,7 +113,7 @@ h3m_enum! { <H3MSize, eat_size, eat_32, usize>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MDifficulty, eat_difficulty, eat_8>
+h3m_enum! { <u8, H3MDifficulty, eat_difficulty, eat_8>
     (0, Easy)
     (1, Normal)
     (2, Hard)
@@ -165,7 +167,7 @@ named!(eat_header<H3MHeader>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MTownKind, eat_town_kind, eat_8>
+h3m_enum! { <u8, H3MTownKind, eat_town_kind, eat_8>
     (0x00, Castle)
     (0x01, Rampart)
     (0x02, Tower)
@@ -231,7 +233,7 @@ named_args!(eat_main_town(version: H3MVersion)<H3MMainTown>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MPlayerBehavior, eat_player_behavior, eat_8>
+h3m_enum! { <u8, H3MPlayerBehavior, eat_player_behavior, eat_8>
     (0, Random)
     (1, Warrior)
     (2, Builder)
@@ -264,7 +266,7 @@ named_args!(eat_artifact(version: H3MVersion)<H3MArtifact>,
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MResource, eat_resource, eat_8>
+h3m_enum! { <u8, H3MResource, eat_resource, eat_8>
     (0, Wood)
     (1, Mercury)
     (2, Ore)
@@ -276,7 +278,7 @@ h3m_enum! { <H3MResource, eat_resource, eat_8>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MHallLevel, eat_hall_level, eat_8>
+h3m_enum! { <u8, H3MHallLevel, eat_hall_level, eat_8>
     (0, Town)
     (1, City)
     (2, Capitol)
@@ -284,7 +286,7 @@ h3m_enum! { <H3MHallLevel, eat_hall_level, eat_8>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MCastleLevel, eat_castle_level, eat_8>
+h3m_enum! { <u8, H3MCastleLevel, eat_castle_level, eat_8>
     (0, Fort)
     (1, Citadel)
     (2, Castle)
@@ -363,14 +365,14 @@ named_args!(eat_victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, swi
 
 #[derive(Debug)]
 enum H3MLossCondition {
-    None,
+    Default,
     LoseTown(H3MLocation),
     LoseHero(H3MLocation),
     TimeExpires(u16),
 }
 
 named!(eat_loss<H3MLossCondition>, switch!(eat_8,
-    0xFF => value!(H3MLossCondition::None) |
+    0xFF => value!(H3MLossCondition::Default) |
     0x00 => do_parse!(l: eat_location >> (H3MLossCondition::LoseTown(l))) |
     0x01 => do_parse!(l: eat_location >> (H3MLossCondition::LoseHero(l))) |
     0x02 => do_parse!(d: eat_16 >> (H3MLossCondition::TimeExpires(d)))
@@ -516,20 +518,20 @@ named_args!(eat_available_heroes(version: H3MVersion)<H3MAvailableHeroes>, do_pa
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! { <H3MSkillLevel, eat_skill_level, eat_8>
+h3m_enum! { <u8, H3MSkillLevel, eat_skill_level, eat_8>
     (0, Unspecified)
     (1, Basic)
     (2, Advanced)
     (3, Expert)
 }
 
-h3m_enum! { <H3MHeroGender, eat_hero_gender, eat_8>
+h3m_enum! { <u8, H3MHeroGender, eat_hero_gender, eat_8>
     (0x00, Male)
     (0x01, Female)
     (0xFF, Default)
 }
 
-h3m_enum! { <H3MColor, eat_color, eat_8>
+h3m_enum! { <u8, H3MColor, eat_color, eat_8>
     (0, Red)
     (1, Blue)
     (2, Tan)
@@ -622,8 +624,7 @@ named!(eat_hero_customization<H3MHeroCustomization>, do_parse!(
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-h3m_enum! {
-    <H3MTerrainType, eat_terrain_type, eat_8, colored::Color>
+h3m_enum! { <u8, H3MTerrainType, eat_terrain_type, eat_8, colored::Color>
     (0x00, TrDirt, colored::Color::Yellow)
     (0x01, TrSand, colored::Color::BrightYellow)
     (0x02, TrGrass, colored::Color::Green)
@@ -636,7 +637,7 @@ h3m_enum! {
     (0x09, TrRock, colored::Color::Black)
 }
 
-h3m_enum! { <H3MRiverType, eat_river_type, eat_8>
+h3m_enum! { <u8, H3MRiverType, eat_river_type, eat_8>
     (0x00, RvNone)
     (0x01, RvClear)
     (0x02, RvIcy)
@@ -644,7 +645,7 @@ h3m_enum! { <H3MRiverType, eat_river_type, eat_8>
     (0x04, RvLava)
 }
 
-h3m_enum! { <H3MRiverTopology, eat_river_topo, eat_8>
+h3m_enum! { <u8, H3MRiverTopology, eat_river_topo, eat_8>
     (0x00, Turn1)
     (0x01, Turn2)
     (0x02, Turn3)
@@ -660,20 +661,20 @@ h3m_enum! { <H3MRiverTopology, eat_river_topo, eat_8>
     (0x0C, Horz2)
 }
 
-h3m_enum! { <H3MRoadType, eat_road_type, eat_8>
+h3m_enum! { <u8, H3MRoadType, eat_road_type, eat_8>
     (0x00, RdNone)
     (0x01, RdDirt)
     (0x02, RdGravel)
     (0x03, RdCobblestone)
 }
 
-h3m_enum! { <H3MRoadTopology, eat_road_topo, eat_8, &[u8]>
+h3m_enum! { <u8, H3MRoadTopology, eat_road_topo, eat_8, &[u8]>
     (0x00, Turn1,   b".   oo o ")
     (0x01, Turn2,   b".   ** * ")
-    (0x02, Turn3,   b".. . o o ")
-    (0x03, Turn4,   b".. . o o ")
-    (0x04, Turn5,   b".. . o o ")
-    (0x05, Turn6,   b".. . o o ")
+    (0x02, Diag1,   b".. . o o ")
+    (0x03, Diag2,   b".. . * * ")
+    (0x04, Diag3,   b".. . o * ")
+    (0x05, Diag4,   b".. . * o ")
     (0x06, TVert1,  b" o  oo o ")
     (0x07, TVert2,  b" *  ** * ")
     (0x08, THorz1,  b"   ooo o ")
@@ -1049,14 +1050,14 @@ named_args!(eat_obj_garrison(version: H3MVersion)<H3MObjectProperties>,
     )
 );
 
-h3m_enum! { <H3MStat, eat_stat, eat_8>
+h3m_enum! { <u8, H3MStat, eat_stat, eat_8>
     (0, Attack)
     (1, Defense)
     (2, SpellPower)
     (3, Knowledge)
 }
 
-h3m_enum! { <H3MSkill, eat_skill, eat_8>
+h3m_enum! { <u8, H3MSkill, eat_skill, eat_8>
     (0, Pathfinding)
     (1, Archery)
     (2, Logistics)
@@ -1087,8 +1088,8 @@ h3m_enum! { <H3MSkill, eat_skill, eat_8>
     (27, FirstAid)
 }
 
-h3m_enum! { <H3MModifier, eat_modifier, eat_8>
-    (0, None)
+h3m_enum! { <u8, H3MModifier, eat_modifier, eat_8>
+    (0, Zero)
     (1, Plus1)
     (2, Plus2)
     (3, Plus3)
@@ -1104,7 +1105,7 @@ named!(eat_spell<H3MSpell>, map!(eat_8, |s| H3MSpell(s)));
 
 #[derive(Debug)]
 enum H3MReward {
-    None,
+    Nothing,
     Exp(u32),
     SpellPoints(u32),
     Morale(H3MModifier),
@@ -1119,7 +1120,7 @@ enum H3MReward {
 
 named_args!(eat_reward(version: H3MVersion)<H3MReward>,
     switch!(eat_8,
-        0 => value!(H3MReward::None) |
+        0 => value!(H3MReward::Nothing) |
         1 => map!(eat_32, |x| H3MReward::Exp(x)) |
         2 => map!(eat_32, |x| H3MReward::SpellPoints(x)) |
         3 => map!(eat_modifier, |m| H3MReward::Morale(m)) |
@@ -1137,7 +1138,7 @@ named_args!(eat_reward(version: H3MVersion)<H3MReward>,
 // Whole struct is AB/SoD
 #[derive(Debug)]
 enum H3MQuestObjective {
-    None,
+    Nothing,
     Level(u32),
     Stats((u8, u8, u8, u8)),
     DefeatHero(u32), // TODO
@@ -1151,7 +1152,7 @@ enum H3MQuestObjective {
 
 named!(eat_quest_objective<H3MQuestObjective>,
     switch!(eat_8,
-        0 => value!(H3MQuestObjective::None) |
+        0 => value!(H3MQuestObjective::Nothing) |
         1 => map!(eat_32, |x| H3MQuestObjective::Level(x)) |
         2 => map!(tuple!(eat_8, eat_8, eat_8, eat_8),
                   |x| H3MQuestObjective::Stats(x)) |
@@ -1302,7 +1303,7 @@ enum H3MObjectProperties {
 
 named_args!(eat_obj_noprops(_v: H3MVersion)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
 
-h3m_enum! { <H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion) -> nom::IResult<&[u8], H3MObjectProperties>>
+h3m_enum! { <u32, H3MObjectClass, eat_obj_class, eat_32, fn (&[u8], H3MVersion) -> nom::IResult<&[u8], H3MObjectProperties>>
     // Objects without additional properties
     (2, AltarOfSacrifice, eat_obj_noprops)
     (4, Arena, eat_obj_noprops)

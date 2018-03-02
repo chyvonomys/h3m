@@ -60,7 +60,7 @@ macro_rules! h3m_enum {
             }
         }
 
-        named! { $f<$u>, do_parse!(x: $p >> y: expr_opt!($u::read(x)) >> (y)) }
+        named_attr!(#[allow(unused_imports)], $f<$u>, do_parse!(x: $p >> y: expr_opt!($u::read(x)) >> (y)));
     );
     ( <$t:ty, $u:ident, $f:ident, $p:ident, $v:ty> $( ($x:expr, $y:ident, $z:expr) )* ) => (
 

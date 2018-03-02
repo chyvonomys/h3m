@@ -72,10 +72,22 @@ macro_rules! h3m_enum {
                     //  _ => None
                 }
             }
+            fn write(&self) -> $t {
+                match *self {
+                    $( $u::$y => $x, )*
+                }
+            }
         }
 
         impl Eat {
             named_attr!(#[allow(unused_imports)], $f<$u>, do_parse!(x: call!(Eat::$p) >> y: expr_opt!($u::read(x)) >> (y)));
+        }
+
+        impl Put {
+            fn $f(o: &mut Vec<u8>, v: $u)
+            {
+                Put::$p(o, v.write());
+            }
         }
     );
     ( <$t:ty, $u:ident, $f:ident, $p:ident, $v:ty> $( ($x:expr, $y:ident, $z:expr) )* ) => (
@@ -91,6 +103,94 @@ macro_rules! h3m_enum {
         }
     );
 }
+
+struct Put {}
+
+impl Put {
+    fn byte(o: &mut Vec<u8>, v: u8) {
+        o.push(v);
+    }
+
+    fn short(o: &mut Vec<u8>, v: u16) {
+        o.push(((v >> 0) & 0xFF) as u8);
+        o.push(((v >> 8) & 0xFF) as u8);
+    }
+
+    fn long(o: &mut Vec<u8>, v: u32) {
+        o.push(((v >>  0) & 0xFF) as u8);
+        o.push(((v >>  8) & 0xFF) as u8);
+        o.push(((v >> 16) & 0xFF) as u8);
+        o.push(((v >> 24) & 0xFF) as u8);
+    }
+}
+
+macro_rules! mon_named (
+    ($f:ident<$t:ty>, $root:ident!( $($args:tt)* )) => (
+        impl Put {
+            fn $f(o: &mut Vec<u8>, v: $t) {
+                $root!(o, v, $($args)* );
+            }
+        }
+    );
+);
+
+macro_rules! mon_do_parse (
+    (__impl $o:ident, $var:ident : $last:ident!( $($args:tt)* ) >> ) => (
+        $last!($o, $var, $($args)* );
+    );
+    
+    (__impl $o:ident, $var:ident : $head:ident!( $($args:tt)* ) >> $($tail:tt)* ) => (
+        $head!($o, $var, $($args)* );
+        mon_do_parse!(__impl $o, $($tail)* );
+    );
+
+    ($o:ident, $v:ident, $( $var:ident : $func:ident!( $($args:tt)* ) >> )*  ( $($pat:tt)* ) ) => (
+        let $($pat)* = $v;
+        mon_do_parse!(__impl $o, $( $var : $func!( $($args)* ) >> )* );
+    );
+);
+
+macro_rules! mon_call (
+    ($o:ident, $v:ident, $f:expr, $arg:expr) => (
+        $f($o, $v, $arg);
+    );
+    ($o:ident, $v:ident, $f:expr) => (
+        $f($o, $v);
+    );
+);
+
+macro_rules! mon_count (
+    ($o:ident, $v:ident, $submac:ident!( $($args:tt)* ), $n:expr) => (
+        for i in 0..$n {
+            let v = $v[i];
+            $submac!($o, v, $($args)*);
+        }
+    );
+);
+
+macro_rules! mon_sod (
+    ($o:ident, $v:ident, $ver:expr, $old:ident!( $($old_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
+        match $ver {
+            H3MVersion::SoD => $sod!($o, $($sod_args)*),
+            _ => $old!($o, $($old_args)*),
+        }
+    );
+);
+
+macro_rules! mon_roe (
+    ($o:ident, $v:ident, $ver:expr, $roe:ident!( $($roe_args:tt)* ), $new:ident!( $($new_args:tt)* )) => (
+        match $ver {
+            H3MVersion::RoE => $roe!($o, $v, $($roe_args)*),
+            _ => $new!($o, $v, $($new_args)*),
+        }
+    );
+);
+
+macro_rules! mon_value (
+    ($o:ident, $v:ident, $val:expr) => (
+        {}
+    );
+);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -112,11 +212,29 @@ w_named!(flag<bool>, switch!(Eat::byte,
     1 => value!(true)
 ));
 
+impl Put {
+    fn flag(o: &mut Vec<u8>, v: bool) {
+        let b = match v {
+            false => 0,
+            true => 1,
+        };
+        Put::byte(o, b);
+    }
+}
+
 w_named!(string<String>, do_parse!(
     n: call!(Eat::long) >>
     st: take!(n) >>
     (String::from_utf8(Vec::from(st)).unwrap_or(String::from("<bad utf8>")))
 ));
+
+impl Put {
+    fn string(o: &mut Vec<u8>, v: String) {
+        let s = v.as_bytes();
+        Put::long(o, s.len() as u32);
+        o.extend_from_slice(s);
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -169,6 +287,27 @@ w_named!(header<H3MHeader>, do_parse!(
     description: call!(Eat::string) >>
     difficulty: call!(Eat::difficulty) >>
     level_cap: roe!(version, value!(0u8), call!(Eat::byte)) >>
+    (H3MHeader {
+        version,
+        has_players,
+        size,
+        has_underground,
+        name,
+        description,
+        difficulty,
+        level_cap,
+    })
+));
+
+mon_named!(header<H3MHeader>, mon_do_parse!(
+    version: mon_call!(Put::version) >>
+    has_players: mon_call!(Put::flag) >>
+    size: mon_call!(Put::size) >>
+    has_underground: mon_call!(Put::flag) >>
+    name: mon_call!(Put::string) >>
+    description: mon_call!(Put::string) >>
+    difficulty: mon_call!(Put::difficulty) >>
+    level_cap: mon_roe!(version, mon_value!(0u8), mon_call!(Put::byte)) >>
     (H3MHeader {
         version,
         has_players,
@@ -1364,7 +1503,7 @@ h3m_enum! { <u32, H3MObjectClass, obj_class, long, fn (&[u8], H3MVersion) -> nom
     (47, SchoolOfMagic, Eat::obj_noprops)
     (48, MagicSpring, Eat::obj_noprops)
     (49, MagicWell, Eat::obj_noprops)
-    (50, Unknown, Eat::obj_noprops) // TODO: Titans Winter.h3m
+    (50, MarketOfTime, Eat::obj_noprops)
     (51, MercenaryCamp, Eat::obj_noprops)
     (52, Mermaid, Eat::obj_noprops)
     (53, Mine, Eat::obj_owned) //
@@ -1693,6 +1832,9 @@ fn main() {
                     if rem.len() > 0 {
                         panic!("remaining: {:?}", rem.len());
                     }
+
+                    let mut out = Vec::new();
+                    Put::header(&mut out, doc.header);
                 }
                 Err(e) => panic!("error: {:#?}", e),
             }

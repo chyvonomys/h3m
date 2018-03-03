@@ -72,6 +72,9 @@ macro_rules! h3m_enum {
                     //  _ => None
                 }
             }
+
+            #[cfg(feature = "put")]
+            #[allow(dead_code)]
             fn write(&self) -> $t {
                 match *self {
                     $( $u::$y => $x, )*
@@ -83,10 +86,13 @@ macro_rules! h3m_enum {
             named_attr!(#[allow(unused_imports)], $f<$u>, do_parse!(x: call!(Eat::$p) >> y: expr_opt!($u::read(x)) >> (y)));
         }
 
+        #[cfg(feature = "put")]
+        #[allow(dead_code)]
         impl Put {
-            fn $f(o: &mut Vec<u8>, v: $u)
+            fn $f(o: &mut Vec<u8>, v: $u) -> bool
             {
-                Put::$p(o, v.write());
+                let ret = Put::$p(o, v.write());
+                ret
             }
         }
     );
@@ -104,61 +110,138 @@ macro_rules! h3m_enum {
     );
 }
 
+#[cfg(feature = "put")]
 struct Put {}
 
+#[cfg(feature = "put")]
 impl Put {
-    fn byte(o: &mut Vec<u8>, v: u8) {
+    fn byte(o: &mut Vec<u8>, v: u8) -> bool {
         o.push(v);
+        true
     }
 
-    fn short(o: &mut Vec<u8>, v: u16) {
+    fn short(o: &mut Vec<u8>, v: u16) -> bool {
         o.push(((v >> 0) & 0xFF) as u8);
         o.push(((v >> 8) & 0xFF) as u8);
+        true
     }
 
-    fn long(o: &mut Vec<u8>, v: u32) {
+    fn long(o: &mut Vec<u8>, v: u32) -> bool {
         o.push(((v >>  0) & 0xFF) as u8);
         o.push(((v >>  8) & 0xFF) as u8);
         o.push(((v >> 16) & 0xFF) as u8);
         o.push(((v >> 24) & 0xFF) as u8);
+        true
     }
 }
 
+#[cfg(feature = "put")]
 macro_rules! mon_named (
     ($f:ident<$t:ty>, $root:ident!( $($args:tt)* )) => (
         impl Put {
-            fn $f(o: &mut Vec<u8>, v: $t) {
-                $root!(o, v, $($args)* );
+            fn $f(o: &mut Vec<u8>, v: $t) -> bool {
+                let ret = $root!(o, v, $($args)* );
+                ret
             }
         }
     );
 );
 
+#[cfg(feature = "put")]
+macro_rules! mon_named_args (
+    ($f:ident( $( $a:ident : $at:ty ),* )<$t:ty>, $root:ident!( $($args:tt)* )) => (
+        impl Put {
+            fn $f(o: &mut Vec<u8>, v: $t, $($a: $at),* ) {
+                let ret = $root!(o, v, $($args)* );
+                ret
+            }
+        }
+    );
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_option (
+    ($o:ident, $v:ident, $submac:ident!( $($args:tt)* )) => (
+        mon_switch!($i,
+            Eat::byte,
+            1u8 => map!($submac!($($args)*), |x| Some(x)) |
+            0u8 => value!(None)
+        )
+    );
+    ($o:ident, $v:ident, $f:expr) => (
+        mon_option!($i, $v, mon_call!($f))
+    );
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_switch (
+    (__impl $o:ident, $v:ident, $buf:ident, $tag:expr, ) => (
+        false
+    );
+
+    (__impl $o:ident, $v:ident, $buf:ident, $tag:expr, | $x:expr => $arm:ident!( $($args:tt)* ) $($tail:tt)* ) => (
+        {
+            if $arm!($buf, $v, $($args)*) {
+                $tag($o, $x);
+                $o.extend_from_slice($buf);
+                true
+            } else {
+                $buf.clear();
+                let res = mon_switch!(__impl $o, $v, $buf, $tag, $($tail)*);
+                res
+            }
+        }
+    );
+
+    ($o:ident, $v:ident, $tag:expr, $($list:tt)* ) => (
+        {
+            let tempo = &mut Vec::new();
+            let res = mon_switch!(__impl $o, $v, tempo, $tag, | $($list)* );
+            res
+        }
+    )
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_map (
+    ($o:ident, $v:ident, $f:expr, |$mi:ident| $($pat:tt)*) => (
+        {
+            let $($pat)* = $v;
+            $f($o, $mi)
+        }
+    );
+);
+
+#[cfg(feature = "put")]
 macro_rules! mon_do_parse (
-    (__impl $o:ident, $var:ident : $last:ident!( $($args:tt)* ) >> ) => (
-        $last!($o, $var, $($args)* );
+    (__impl $o:ident, $res:expr, $var:ident : $last:ident!( $($args:tt)* ) >> ) => (
+        $res = $res && $last!($o, $var, $($args)* );
     );
     
-    (__impl $o:ident, $var:ident : $head:ident!( $($args:tt)* ) >> $($tail:tt)* ) => (
-        $head!($o, $var, $($args)* );
-        mon_do_parse!(__impl $o, $($tail)* );
+    (__impl $o:ident, $res:expr, $var:ident : $head:ident!( $($args:tt)* ) >> $($tail:tt)* ) => (
+        $res = $res && $head!($o, $var, $($args)* );
+        mon_do_parse!(__impl $o, $res, $($tail)* );
     );
 
     ($o:ident, $v:ident, $( $var:ident : $func:ident!( $($args:tt)* ) >> )*  ( $($pat:tt)* ) ) => (
-        let $($pat)* = $v;
-        mon_do_parse!(__impl $o, $( $var : $func!( $($args)* ) >> )* );
+        {
+            let $($pat)* = $v;
+            let mut res = true;
+            mon_do_parse!(__impl $o, res, $( $var : $func!( $($args)* ) >> )* );
+            res
+        }
     );
 );
 
+#[cfg(feature = "put")]
 macro_rules! mon_call (
-    ($o:ident, $v:ident, $f:expr, $arg:expr) => (
-        $f($o, $v, $arg);
-    );
-    ($o:ident, $v:ident, $f:expr) => (
-        $f($o, $v);
+    ($o:ident, $v:ident, $f:expr $(,$arg:expr)*) => (
+        $f($o, $v $(,$arg)*)
     );
 );
 
+
+#[cfg(feature = "put")]
 macro_rules! mon_count (
     ($o:ident, $v:ident, $submac:ident!( $($args:tt)* ), $n:expr) => (
         for i in 0..$n {
@@ -168,6 +251,7 @@ macro_rules! mon_count (
     );
 );
 
+#[cfg(feature = "put")]
 macro_rules! mon_sod (
     ($o:ident, $v:ident, $ver:expr, $old:ident!( $($old_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
         match $ver {
@@ -177,6 +261,7 @@ macro_rules! mon_sod (
     );
 );
 
+#[cfg(feature = "put")]
 macro_rules! mon_roe (
     ($o:ident, $v:ident, $ver:expr, $roe:ident!( $($roe_args:tt)* ), $new:ident!( $($new_args:tt)* )) => (
         match $ver {
@@ -186,9 +271,14 @@ macro_rules! mon_roe (
     );
 );
 
+#[cfg(feature = "put")]
 macro_rules! mon_value (
-    ($o:ident, $v:ident, $val:expr) => (
-        {}
+    ($o:ident, $v:ident, $val:pat) => (
+        // NOTE: will warn if $val is the only variant
+        match $v {
+            $val => true,
+               _ => false,
+        }
     );
 );
 
@@ -212,15 +302,13 @@ w_named!(flag<bool>, switch!(Eat::byte,
     1 => value!(true)
 ));
 
-impl Put {
-    fn flag(o: &mut Vec<u8>, v: bool) {
-        let b = match v {
-            false => 0,
-            true => 1,
-        };
-        Put::byte(o, b);
-    }
-}
+#[cfg(feature = "put")]
+mon_named!(flag<bool>, mon_switch!(Put::byte,
+    0 => mon_value!(false) |
+    1 => mon_value!(true)
+));
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 w_named!(string<String>, do_parse!(
     n: call!(Eat::long) >>
@@ -228,11 +316,16 @@ w_named!(string<String>, do_parse!(
     (String::from_utf8(Vec::from(st)).unwrap_or(String::from("<bad utf8>")))
 ));
 
+#[cfg(feature = "put")]
 impl Put {
-    fn string(o: &mut Vec<u8>, v: String) {
+    fn string(o: &mut Vec<u8>, v: String) -> bool {
         let s = v.as_bytes();
-        Put::long(o, s.len() as u32);
-        o.extend_from_slice(s);
+        if Put::long(o, s.len() as u32) {
+            o.extend_from_slice(s);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -299,6 +392,7 @@ w_named!(header<H3MHeader>, do_parse!(
     })
 ));
 
+#[cfg(feature = "put")]
 mon_named!(header<H3MHeader>, mon_do_parse!(
     version: mon_call!(Put::version) >>
     has_players: mon_call!(Put::flag) >>
@@ -1027,7 +1121,7 @@ w_named_args!(obj_monster(version: H3MVersion)<H3MObjectProperties>, do_parse!(
         _ => map!(Eat::short, |q| H3MQuantity::Custom(q))
     )>>
     disposition: call!(Eat::disposition) >>
-    treasure: option!(tuple!(call!(Eat::string), Eat::resources, call!(Eat::artifact, version))) >>
+    treasure: option!(tuple!(Eat::string, Eat::resources, call!(Eat::artifact, version))) >>
     never_flees: call!(Eat::flag) >>
     no_grow: call!(Eat::flag) >>
     _zeroes: tag!([0u8; 2]) >>
@@ -1340,10 +1434,10 @@ w_named_args!(obj_quest_guard(version: H3MVersion)<H3MObjectProperties>,
 struct H3MMsgGuardReward {
     guard: Option<H3MMessageAndGuards>,
     exp: u32,
-    spell_points: u32,
-    morale: H3MModifier,
-    luck: H3MModifier,
-    resources: H3MResources,
+    spell_points: u32, // give/take
+    morale: H3MModifier, // give/take
+    luck: H3MModifier, // give/take
+    resources: H3MResources, // give/take
     stats: (u8, u8, u8, u8),
     skills: Vec<(H3MSkill, H3MSkillLevel)>,
     artifacts: Vec<H3MArtifact>,
@@ -1434,7 +1528,7 @@ enum H3MObjectProperties {
     RandomDwelling { owner: H3MColor, faction: H3MDwellingFaction, level_range: (u8, u8) },
     RandomDwellingLevel { owner: H3MColor, faction: H3MDwellingFaction },
     RandomDwellingFaction { owner: H3MColor, level_range: (u8, u8) },
-    Resource { guard: Option<H3MMessageAndGuards>, amount: u32 }, // TODO: amount `0`
+    Resource { guard: Option<H3MMessageAndGuards>, amount: u32 }, // TODO: amount `0`, amount could be random. if gold then 100x
     Artifact { guard: Option<H3MMessageAndGuards> },
     Scroll { guard: Option<H3MMessageAndGuards>, spell: H3MSpell },
     Witch { skills: u32 },
@@ -1541,9 +1635,9 @@ h3m_enum! { <u32, H3MObjectClass, obj_class, long, fn (&[u8], H3MVersion) -> nom
     (85, Shipwreck, Eat::obj_noprops)
     (86, ShipwreckSurvivor, Eat::obj_noprops)
     (87, Shipyard, Eat::obj_owned) //
-    (88, ShrineOfMagicIncantation, Eat::obj_shrine) //
-    (89, ShrineOfMagicGesture, Eat::obj_shrine) //
-    (90, ShrineOfMagicThought, Eat::obj_shrine) //
+    (88, ShrineOfMagicIncantation, Eat::obj_shrine) // level 1 spells
+    (89, ShrineOfMagicGesture, Eat::obj_shrine) // level 2 spells
+    (90, ShrineOfMagicThought, Eat::obj_shrine) // level 3 spells
     (91, Sign, Eat::obj_message) //
     (92, Sirens, Eat::obj_noprops)
     (93, SpellScroll, Eat::obj_scroll) //
@@ -1729,7 +1823,7 @@ w_named!(h3m<H3MFile>, do_parse!(
     banned_artifacts_ext: sod!(header.version, value!(31u8), call!(Eat::byte)) >>
     banned_spells: sod!(header.version, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
     banned_skills: sod!(header.version, value!(0u32), call!(Eat::long)) >>
-    rumors: length_count!(Eat::long, tuple!(call!(Eat::string), call!(Eat::string))) >>
+    rumors: length_count!(Eat::long, tuple!(Eat::string, Eat::string)) >>
     heroes: count!(sod!(header.version, value!(None), option!(Eat::hero_customization)), 156) >>
     land: count!(Eat::tile, header.get_width() * header.get_height()) >>
     underground: switch!(value!(header.has_underground),
@@ -1782,6 +1876,20 @@ fn print_map(doc: &H3MFile) {
     }
 }
 
+fn hex_dump(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut dump = String::new();
+    let mut count: usize = 0;
+    for byte in bytes {
+        write!(dump, "{:02X} ", byte).unwrap();
+        count += 1;
+        if count % 32 == 0 {
+            dump.push_str("\n");
+        }
+    }
+    dump
+}
+
 fn main() {
     let matches = clap::App::new("h3m")
         .arg(clap::Arg::with_name("binflag").short("b").long("bin"))
@@ -1805,18 +1913,7 @@ fn main() {
     match res {
         Ok(bin) => {
             if matches.is_present("binflag") {
-                use std::fmt::Write;
-                let mut dump = String::new();
-                let mut count: usize = 0;
-                for byte in &bin {
-                    write!(dump, "{:02X} ", byte).unwrap();
-                    count += 1;
-                    if count % 32 == 0 {
-                        dump.push_str("\n");
-                    }
-                }
-
-                println!("unzipped size: {}\n{}", bin.len(), dump);
+                println!("unzipped size: {}\n{}", bin.len(), hex_dump(&bin));
             }
 
             match Eat::h3m(&bin) {
@@ -1833,8 +1930,14 @@ fn main() {
                         panic!("remaining: {:?}", rem.len());
                     }
 
-                    let mut out = Vec::new();
-                    Put::header(&mut out, doc.header);
+                    #[cfg(feature = "put")]
+                    {
+                        let out = &mut Vec::new();
+                        Put::header(out, doc.header);
+
+                        println!("original_dump:\n{}\n", hex_dump(&bin[0..out.len()]));
+                        println!("reversed_dump:\n{}\n", hex_dump(&out));
+                    }
                 }
                 Err(e) => panic!("error: {:#?}", e),
             }

@@ -8,3 +8,7 @@ nom = "4.0.0-beta1"
 flate2 = "*"
 colored = "*"
 clap = "*"
+
+[features]
+default = ["put"]
+put = []

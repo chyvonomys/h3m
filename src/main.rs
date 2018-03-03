@@ -89,9 +89,9 @@ macro_rules! h3m_enum {
         #[cfg(feature = "put")]
         #[allow(dead_code)]
         impl Put {
-            fn $f(o: &mut Vec<u8>, v: $u) -> bool
+            fn $f(o: &mut Vec<u8>, v: &$u) -> bool
             {
-                let ret = Put::$p(o, v.write());
+                let ret = Put::$p(o, &v.write());
                 ret
             }
         }
@@ -115,22 +115,22 @@ struct Put {}
 
 #[cfg(feature = "put")]
 impl Put {
-    fn byte(o: &mut Vec<u8>, v: u8) -> bool {
-        o.push(v);
+    fn byte(o: &mut Vec<u8>, v: &u8) -> bool {
+        o.push(*v);
         true
     }
 
-    fn short(o: &mut Vec<u8>, v: u16) -> bool {
-        o.push(((v >> 0) & 0xFF) as u8);
-        o.push(((v >> 8) & 0xFF) as u8);
+    fn short(o: &mut Vec<u8>, v: &u16) -> bool {
+        o.push(((*v >> 0) & 0xFF) as u8);
+        o.push(((*v >> 8) & 0xFF) as u8);
         true
     }
 
-    fn long(o: &mut Vec<u8>, v: u32) -> bool {
-        o.push(((v >>  0) & 0xFF) as u8);
-        o.push(((v >>  8) & 0xFF) as u8);
-        o.push(((v >> 16) & 0xFF) as u8);
-        o.push(((v >> 24) & 0xFF) as u8);
+    fn long(o: &mut Vec<u8>, v: &u32) -> bool {
+        o.push(((*v >>  0) & 0xFF) as u8);
+        o.push(((*v >>  8) & 0xFF) as u8);
+        o.push(((*v >> 16) & 0xFF) as u8);
+        o.push(((*v >> 24) & 0xFF) as u8);
         true
     }
 }
@@ -139,7 +139,7 @@ impl Put {
 macro_rules! mon_named (
     ($f:ident<$t:ty>, $root:ident!( $($args:tt)* )) => (
         impl Put {
-            fn $f(o: &mut Vec<u8>, v: $t) -> bool {
+            fn $f(o: &mut Vec<u8>, v: &$t) -> bool {
                 let ret = $root!(o, v, $($args)* );
                 ret
             }
@@ -151,7 +151,7 @@ macro_rules! mon_named (
 macro_rules! mon_named_args (
     ($f:ident( $( $a:ident : $at:ty ),* )<$t:ty>, $root:ident!( $($args:tt)* )) => (
         impl Put {
-            fn $f(o: &mut Vec<u8>, v: $t, $($a: $at),* ) {
+            fn $f(o: &mut Vec<u8>, v: &$t, $($a: $at),* ) -> bool {
                 let ret = $root!(o, v, $($args)* );
                 ret
             }
@@ -182,7 +182,8 @@ macro_rules! mon_switch (
     (__impl $o:ident, $v:ident, $buf:ident, $tag:expr, | $x:expr => $arm:ident!( $($args:tt)* ) $($tail:tt)* ) => (
         {
             if $arm!($buf, $v, $($args)*) {
-                $tag($o, $x);
+                let var = &$x;
+                $tag($o, var);
                 $o.extend_from_slice($buf);
                 true
             } else {
@@ -206,7 +207,7 @@ macro_rules! mon_switch (
 macro_rules! mon_map (
     ($o:ident, $v:ident, $f:expr, |$mi:ident| $($pat:tt)*) => (
         {
-            let $($pat)* = $v;
+            let &$($pat)* = $v;
             $f($o, $mi)
         }
     );
@@ -225,7 +226,7 @@ macro_rules! mon_do_parse (
 
     ($o:ident, $v:ident, $( $var:ident : $func:ident!( $($args:tt)* ) >> )*  ( $($pat:tt)* ) ) => (
         {
-            let $($pat)* = $v;
+            let &$($pat)* = $v;
             let mut res = true;
             mon_do_parse!(__impl $o, res, $( $var : $func!( $($args)* ) >> )* );
             res
@@ -240,7 +241,6 @@ macro_rules! mon_call (
     );
 );
 
-
 #[cfg(feature = "put")]
 macro_rules! mon_count (
     ($o:ident, $v:ident, $submac:ident!( $($args:tt)* ), $n:expr) => (
@@ -254,7 +254,7 @@ macro_rules! mon_count (
 #[cfg(feature = "put")]
 macro_rules! mon_sod (
     ($o:ident, $v:ident, $ver:expr, $old:ident!( $($old_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
-        match $ver {
+        match *$ver {
             H3MVersion::SoD => $sod!($o, $($sod_args)*),
             _ => $old!($o, $($old_args)*),
         }
@@ -264,7 +264,7 @@ macro_rules! mon_sod (
 #[cfg(feature = "put")]
 macro_rules! mon_roe (
     ($o:ident, $v:ident, $ver:expr, $roe:ident!( $($roe_args:tt)* ), $new:ident!( $($new_args:tt)* )) => (
-        match $ver {
+        match *$ver {
             H3MVersion::RoE => $roe!($o, $v, $($roe_args)*),
             _ => $new!($o, $v, $($new_args)*),
         }
@@ -275,7 +275,7 @@ macro_rules! mon_roe (
 macro_rules! mon_value (
     ($o:ident, $v:ident, $val:pat) => (
         // NOTE: will warn if $val is the only variant
-        match $v {
+        match *$v {
             $val => true,
                _ => false,
         }
@@ -318,9 +318,9 @@ w_named!(string<String>, do_parse!(
 
 #[cfg(feature = "put")]
 impl Put {
-    fn string(o: &mut Vec<u8>, v: String) -> bool {
+    fn string(o: &mut Vec<u8>, v: &String) -> bool {
         let s = v.as_bytes();
-        if Put::long(o, s.len() as u32) {
+        if Put::long(o, &(s.len() as u32)) {
             o.extend_from_slice(s);
             true
         } else {
@@ -403,14 +403,14 @@ mon_named!(header<H3MHeader>, mon_do_parse!(
     difficulty: mon_call!(Put::difficulty) >>
     level_cap: mon_roe!(version, mon_value!(0u8), mon_call!(Put::byte)) >>
     (H3MHeader {
-        version,
-        has_players,
-        size,
-        has_underground,
-        name,
-        description,
-        difficulty,
-        level_cap,
+        ref version,
+        ref has_players,
+        ref size,
+        ref has_underground,
+        ref name,
+        ref description,
+        ref difficulty,
+        ref level_cap,
     })
 ));
 
@@ -655,6 +655,14 @@ w_named!(player_playability<H3MPlayerPlayability>, do_parse!(
     (H3MPlayerPlayability { human, computer, behavior })
 ));
 
+#[cfg(feature = "put")]
+mon_named!(player_playability<H3MPlayerPlayability>, mon_do_parse!(
+    human: mon_call!(Put::flag) >>
+    computer: mon_call!(Put::flag) >>
+    behavior: mon_call!(Put::player_behavior) >>
+    (H3MPlayerPlayability { ref human, ref computer, ref behavior })
+));
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -719,6 +727,31 @@ w_named_args!(player(version: H3MVersion)<H3MPlayer>, do_parse!(
         main_hero,
         num_placeholders,
         heroes,
+    })
+));
+
+#[cfg(feature = "put")]
+mon_named_args!(player(version: H3MVersion)<H3MPlayer>, mon_do_parse!(
+    playability: mon_call!(Put::player_playability) >>
+    // allowed_alignments: mon_call!(Put::player_allowed_alignments, version, playability.human || playability.computer) >>
+    // main_town: mon_option!(mon_call!(Put::main_town, version)) >>
+    // random_hero: mon_call!(Put::flag) >>
+    // hero_type: mon_call!(Put::byte) >>
+    // main_hero: mon_switch!(mon_value!(hero_type),
+    //     0xFFu8 => mon_value!(None) |
+    //     _ => mon_map!(Put::hero, |x| Some(x))
+    // ) >>
+    // num_placeholders: mon_roe!(version, mon_value!(0u8), mon_call!(Put::byte)) >>
+    // heroes: mon_roe!(version, mon_value!(Vec::default()), mon_length_count!(Put::long, Put::hero)) >>
+    (H3MPlayer {
+        ref playability,
+        ref allowed_alignments,
+        ref main_town,
+        ref random_hero,
+        ref hero_type,
+        ref main_hero,
+        ref num_placeholders,
+        ref heroes,
     })
 ));
 
@@ -1933,7 +1966,8 @@ fn main() {
                     #[cfg(feature = "put")]
                     {
                         let out = &mut Vec::new();
-                        Put::header(out, doc.header);
+                        Put::header(out, &doc.header);
+                        Put::player(out, &doc.players[0], doc.header.version);
 
                         println!("original_dump:\n{}\n", hex_dump(&bin[0..out.len()]));
                         println!("reversed_dump:\n{}\n", hex_dump(&out));

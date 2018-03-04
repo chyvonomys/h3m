@@ -114,9 +114,30 @@ macro_rules! mon_option (
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+macro_rules! ifeq (
+    ($i:expr, $c:expr, $t:pat, $thn:ident!( $($targs:tt)* ), $els:ident!( $($eargs:tt)* )) => (
+        switch!($i, value!($c),
+            $t => $thn!($($targs)*) |
+            _ => $els!($($eargs)*)
+        )
+    );
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_ifeq (
+    ($o:ident, $v:ident, $c:expr, $t:pat, $thn:ident!( $($targs:tt)* ), $els:ident!( $($eargs:tt)* )) => (
+        match $c {
+            $t => $thn!($o, $v, $($targs)*),
+            _ => $els!($o, $v, $($eargs)*),
+        }
+    );
+);
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
 macro_rules! sod (
-    ($i:expr, $v:expr, $old:ident!( $($old_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
-        switch!($i, value!($v),
+    ($i:expr, $ver:expr, $old:ident!( $($old_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
+        switch!($i, value!($ver),
             H3MVersion::SoD => $sod!($($sod_args)*) |
             _ => $old!($($old_args)*)
         )
@@ -135,31 +156,10 @@ macro_rules! mon_sod (
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-macro_rules! roe (
-    ($i:expr, $v:expr, $roe:ident!( $($roe_args:tt)* ), $new:ident!( $($new_args:tt)* )) => (
-        switch!($i, value!($v),
-            H3MVersion::RoE => $roe!($($roe_args)*) |
-            _ => $new!($($new_args)*)
-        )
-    );
-);
-
-#[cfg(feature = "put")]
-macro_rules! mon_roe (
-    ($o:ident, $v:ident, $ver:expr, $roe:ident!( $($roe_args:tt)* ), $new:ident!( $($new_args:tt)* )) => (
-        match $ver {
-            H3MVersion::RoE => $roe!($o, $v, $($roe_args)*),
-            _ => $new!($o, $v, $($new_args)*),
-        }
-    );
-);
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
 #[cfg(feature = "put")]
 macro_rules! mon_switch (
     (__impl $o:ident, $v:ident, $buf:ident, $tag:ident!( $($targs:tt)* ), ) => (
-        false
+        unreachable!()
     );
 
     (__impl $o:ident, $v:ident, $buf:ident, $tag:ident!( $($targs:tt)* ), | $x:expr => $arm:ident!( $($aargs:tt)* ) $($tail:tt)* ) => (
@@ -171,8 +171,7 @@ macro_rules! mon_switch (
                 true
             } else {
                 $buf.clear();
-                let res = mon_switch!(__impl $o, $v, $buf, $tag!($($targs)*), $($tail)*);
-                res
+                mon_switch!(__impl $o, $v, $buf, $tag!($($targs)*), $($tail)*)
             }
         }
     );
@@ -180,13 +179,12 @@ macro_rules! mon_switch (
     ($o:ident, $v:ident, $tag:ident!( $($args:tt)* ), $($list:tt)* ) => (
         {
             let tempo = &mut Vec::new();
-            let res = mon_switch!(__impl $o, $v, tempo, $tag!($($args)*), | $($list)* );
-            res
+            mon_switch!(__impl $o, $v, tempo, $tag!($($args)*), | $($list)* )
         }
     );
 
     ($o:ident, $v:ident, $tag:expr, $($list:tt)* ) => (
-        mon_switch!($o, $v, mon_call!($tag), $($list)* );
+        mon_switch!($o, $v, mon_call!($tag), $($list)* )
     );
 );
 
@@ -349,7 +347,7 @@ w_named!(header<H3MHeader>, do_parse!(
     name: call!(Eat::string) >>
     description: call!(Eat::string) >>
     difficulty: call!(Eat::difficulty) >>
-    level_cap: roe!(version, value!(0u8), call!(Eat::byte)) >>
+    level_cap: ifeq!(version, H3MVersion::RoE, value!(0u8), call!(Eat::byte)) >>
     (H3MHeader {
         version,
         has_players,
@@ -371,7 +369,7 @@ mon_named!(header<H3MHeader>, mon_do_parse!(
     name: mon_call!(Put::string) >>
     description: mon_call!(Put::string) >>
     difficulty: mon_call!(Put::difficulty) >>
-    level_cap: mon_roe!(*version, mon_value!(0u8), mon_call!(Put::byte)) >>
+    level_cap: mon_ifeq!(version, &H3MVersion::RoE, mon_value!(0u8), mon_call!(Put::byte)) >>
     (H3MHeader {
         ref version,
         ref has_players,
@@ -435,16 +433,16 @@ struct H3MMainTown {
 }
 
 w_named_args!(main_town(version: H3MVersion)<H3MMainTown>, do_parse!(
-    generate_hero: roe!(version, value!(true), call!(Eat::flag)) >>
-    kind: roe!(version, value!(H3MTownKind::Random), call!(Eat::town_kind)) >>
+    generate_hero: ifeq!(version, H3MVersion::RoE, value!(true), call!(Eat::flag)) >>
+    kind: ifeq!(version, H3MVersion::RoE, value!(H3MTownKind::Random), call!(Eat::town_kind)) >>
     location: call!(Eat::location) >>
     (H3MMainTown { generate_hero, kind, location })
 ));
 
 #[cfg(feature = "put")]
 mon_named_args!(main_town(version: H3MVersion)<H3MMainTown>, mon_do_parse!(
-    generate_hero: mon_roe!(version, mon_value!(true), mon_call!(Put::flag)) >>
-    kind: mon_roe!(version, mon_value!(H3MTownKind::Random), mon_call!(Put::town_kind)) >>
+    generate_hero: mon_ifeq!(version, H3MVersion::RoE, mon_value!(true), mon_call!(Put::flag)) >>
+    kind: mon_ifeq!(version, H3MVersion::RoE, mon_value!(H3MTownKind::Random), mon_call!(Put::town_kind)) >>
     location: mon_call!(Put::location) >>
     (H3MMainTown { ref generate_hero, ref kind, ref location })
 ));
@@ -472,7 +470,7 @@ w_named!(artifact1<H3MArtifact>, map!(Eat::byte, |i| H3MArtifact(if i == 0xFF { 
 w_named!(artifact2<H3MArtifact>, map!(Eat::short, |i| H3MArtifact(i)));
 
 w_named_args!(artifact(version: H3MVersion)<H3MArtifact>,
-    roe!(version, call!(Eat::artifact1), call!(Eat::artifact2))
+    ifeq!(version, H3MVersion::RoE, call!(Eat::artifact1), call!(Eat::artifact2))
 );
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -484,7 +482,7 @@ w_named!(creature1<H3MCreature>, map!(Eat::byte, |i| H3MCreature(if i == 0xFF { 
 w_named!(creature2<H3MCreature>, map!(Eat::short, |i| H3MCreature(i)));
 
 w_named_args!(creature(version: H3MVersion)<H3MCreature>,
-    roe!(version, call!(Eat::creature1), call!(Eat::creature2))
+    ifeq!(version, H3MVersion::RoE, call!(Eat::creature1), call!(Eat::creature2))
 );
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -577,6 +575,12 @@ w_named!(hero<H3MHero>, do_parse!(
     (H3MHero { face, name })
 ));
 
+mon_named!(hero<H3MHero>, mon_do_parse!(
+    face: mon_call!(Put::byte) >>
+    name: mon_call!(Put::string) >>
+    (H3MHero { ref face, ref name })
+));
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -616,7 +620,7 @@ w_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H3M
         true => do_parse!(
             unknown: sod!(version, value!(false), call!(Eat::flag)) >>
             mask: call!(Eat::byte) >>
-            mask_ext: roe!(version, value!(1u8), call!(Eat::byte)) >>
+            mask_ext: ifeq!(version, H3MVersion::RoE, value!(1u8), call!(Eat::byte)) >>
             random: call!(Eat::flag) >>
             (H3MPlayerAllowedAlignments {
                 unknown, mask, mask_ext, random,
@@ -636,7 +640,7 @@ mon_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H
         true => mon_do_parse!(
             unknown: mon_sod!(version, mon_value!(false), mon_call!(Put::flag)) >>
             mask: mon_call!(Put::byte) >>
-            mask_ext: mon_roe!(version, mon_value!(1u8), mon_call!(Put::byte)) >>
+            mask_ext: mon_ifeq!(version, H3MVersion::RoE, mon_value!(1u8), mon_call!(Put::byte)) >>
             random: mon_call!(Put::flag) >>
             (H3MPlayerAllowedAlignments {
                 ref unknown, ref mask, ref mask_ext, ref random,
@@ -671,12 +675,9 @@ w_named_args!(player(version: H3MVersion)<H3MPlayer>, do_parse!(
     main_town: option!(call!(Eat::main_town, version)) >>
     random_hero: call!(Eat::flag) >>
     hero_type: call!(Eat::byte) >>
-    main_hero: switch!(value!(hero_type),
-        0xFFu8 => value!(None) |
-        _ => map!(Eat::hero, |x| Some(x))
-    ) >>
-    num_placeholders: roe!(version, value!(0u8), call!(Eat::byte)) >>
-    heroes: roe!(version, value!(Vec::default()), length_count!(Eat::long, Eat::hero)) >>
+    main_hero: ifeq!(hero_type, 0xFFu8, value!(None), map!(Eat::hero, |x| Some(x))) >>
+    num_placeholders: ifeq!(version, H3MVersion::RoE, value!(0u8), call!(Eat::byte)) >>
+    heroes: ifeq!(version, H3MVersion::RoE, value!(Vec::default()), length_count!(Eat::long, Eat::hero)) >>
     (H3MPlayer {
         playability,
         allowed_alignments,
@@ -696,12 +697,9 @@ mon_named_args!(player(version: H3MVersion)<H3MPlayer>, mon_do_parse!(
     main_town: mon_option!(mon_call!(Put::main_town, version)) >>
     random_hero: mon_call!(Put::flag) >>
     hero_type: mon_call!(Put::byte) >>
-    // main_hero: mon_switch!(mon_value!(hero_type),
-    //     0xFFu8 => mon_value!(None) |
-    //     _ => mon_map!(Put::hero, |x| Some(x))
-    // ) >>
-    // num_placeholders: mon_roe!(version, mon_value!(0u8), mon_call!(Put::byte)) >>
-    // heroes: mon_roe!(version, mon_value!(Vec::default()), mon_length_count!(Put::long, Put::hero)) >>
+    main_hero: mon_ifeq!(hero_type, &0xFFu8, mon_value!(None), mon_map!(Put::hero, |x| Some(ref x))) >>
+    num_placeholders: mon_ifeq!(version, H3MVersion::RoE, mon_value!(0u8), mon_call!(Put::byte)) >>
+    // heroes: mon_ifeq!(version, H3MVersion::RoE, mon_value!(Vec::default()), mon_length_count!(Put::long, Put::hero)) >>
     (H3MPlayer {
         ref playability,
         ref allowed_alignments,
@@ -743,8 +741,8 @@ struct H3MAvailableHeroes {
 
 w_named_args!(available_heroes(version: H3MVersion)<H3MAvailableHeroes>, do_parse!(
     mask: count_fixed!(u8, Eat::byte, 16) >>
-    mask_ext: roe!(version, value!([0xFF, 0xFF, 1, 0]), count_fixed!(u8, Eat::byte, 4)) >>
-    _zeroes: roe!(version, value!(()), value!((), tag!([0u8; 4]))) >>
+    mask_ext: ifeq!(version, H3MVersion::RoE, value!([0xFF, 0xFF, 1, 0]), count_fixed!(u8, Eat::byte, 4)) >>
+    _zeroes: ifeq!(version, H3MVersion::RoE, value!(()), value!((), tag!([0u8; 4]))) >>
     settings: sod!(version, value!(Vec::default()), length_count!(Eat::byte, Eat::hero_availability)) >>
     (H3MAvailableHeroes { mask, mask_ext, settings })
 ));
@@ -1222,7 +1220,7 @@ enum H3MObjectProperties {
 }
 
 w_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
-    id: roe!(version, value!(0xFFFFFFFF), call!(Eat::long)) >>
+    id: ifeq!(version, H3MVersion::RoE, value!(0xFFFFFFFF), call!(Eat::long)) >>
     owner: call!(Eat::color) >>
     hero_type: call!(Eat::byte) >>
     name: option!(Eat::string) >>
@@ -1233,8 +1231,8 @@ w_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     group_formation: call!(Eat::flag) >>
     equipment: option!(call!(Eat::hero_equipment, version)) >>
     patrol_radius: call!(Eat::byte) >>
-    bio: roe!(version, value!(None), option!(Eat::string)) >>
-    gender: roe!(version, value!(H3MHeroGender::Default), call!(Eat::hero_gender)) >>
+    bio: ifeq!(version, H3MVersion::RoE, value!(None), option!(Eat::string)) >>
+    gender: ifeq!(version, H3MVersion::RoE, value!(H3MHeroGender::Default), call!(Eat::hero_gender)) >>
     spells: switch!(value!(version),
                     H3MVersion::RoE => value!(None) |
                     H3MVersion::AB => value!(None, Eat::byte) |
@@ -1249,7 +1247,7 @@ w_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
 ));
 
 w_named_args!(obj_monster(version: H3MVersion)<H3MObjectProperties>, do_parse!(
-    id: roe!(version, value!(0xFFFFFFFF), call!(Eat::long)) >>
+    id: ifeq!(version, H3MVersion::RoE, value!(0xFFFFFFFF), call!(Eat::long)) >>
     quantity: switch!(peek!(Eat::short),
         0 => value!(H3MQuantity::Random, Eat::short) |
         _ => map!(Eat::short, |q| H3MQuantity::Custom(q))
@@ -1265,13 +1263,13 @@ w_named_args!(obj_monster(version: H3MVersion)<H3MObjectProperties>, do_parse!(
 ));
 
 w_named_args!(obj_town(version: H3MVersion)<H3MObjectProperties>, do_parse!(
-    id: roe!(version, value!(0xFFFFFFFF), call!(Eat::long)) >>
+    id: ifeq!(version, H3MVersion::RoE, value!(0xFFFFFFFF), call!(Eat::long)) >>
     owner: call!(Eat::color) >>
     name: option!(Eat::string) >>
     garrison: option!(call!(Eat::creatures, version)) >>
     group_formation: call!(Eat::flag) >>
     buildings: call!(Eat::buildings) >>
-    forced_spells: roe!(version, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
+    forced_spells: ifeq!(version, H3MVersion::RoE, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
     allowed_spells: call!(Eat::spells_mask) >>
     events: length_count!(Eat::long, call!(Eat::town_event, version)) >>
     alignment: sod!(version, value!(0xFF), call!(Eat::byte)) >>
@@ -1343,7 +1341,7 @@ w_named_args!(obj_scroll(version: H3MVersion)<H3MObjectProperties>,
 );
 
 w_named_args!(obj_witch(version: H3MVersion)<H3MObjectProperties>, map!(
-    roe!(version, value!(0x0FFFEFBF), call!(Eat::long)),
+    ifeq!(version, H3MVersion::RoE, value!(0x0FFFEFBF), call!(Eat::long)),
     |skills| H3MObjectProperties::Witch { skills }
 ));
 
@@ -1377,7 +1375,7 @@ w_named_args!(obj_garrison(version: H3MVersion)<H3MObjectProperties>,
         owner: call!(Eat::color) >>
         _zeroes1: tag!([0u8; 3]) >>
         creatures: call!(Eat::creatures, version) >>
-        removable: roe!(version, value!(1u8), call!(Eat::byte)) >> // TODO: meaning, bool?
+        removable: ifeq!(version, H3MVersion::RoE, value!(1u8), call!(Eat::byte)) >> // TODO: meaning, bool?
         _zeroes2: tag!([0u8; 8]) >>
         (H3MObjectProperties::Garrison { owner, creatures, removable })
     )
@@ -1385,7 +1383,7 @@ w_named_args!(obj_garrison(version: H3MVersion)<H3MObjectProperties>,
 
 w_named_args!(obj_seer(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
-        quest: roe!(version, call!(Eat::quest1), call!(Eat::quest2)) >>
+        quest: ifeq!(version, H3MVersion::RoE, call!(Eat::quest1), call!(Eat::quest2)) >>
         reward: call!(Eat::reward, version) >>
         _zeroes: tag!([0u8; 2]) >>
         (H3MObjectProperties::Seer { quest, reward })
@@ -1394,7 +1392,7 @@ w_named_args!(obj_seer(version: H3MVersion)<H3MObjectProperties>,
 
 w_named_args!(obj_quest_guard(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
-        quest: roe!(version, call!(Eat::quest1), call!(Eat::quest2)) >>
+        quest: ifeq!(version, H3MVersion::RoE, call!(Eat::quest1), call!(Eat::quest2)) >>
         (H3MObjectProperties::QuestGuard { quest })
     )
 );
@@ -1537,7 +1535,7 @@ w_named!(h3m<H3MFile>, do_parse!(
     ) >>
     available_heroes: call!(Eat::available_heroes, header.version) >>
     _zeroes: tag!([0u8; 31]) >>
-    banned_artifacts: roe!(header.version, value!([0u8; 17]), count_fixed!(u8, Eat::byte, 17)) >>
+    banned_artifacts: ifeq!(header.version, H3MVersion::RoE, value!([0u8; 17]), count_fixed!(u8, Eat::byte, 17)) >>
     banned_artifacts_ext: sod!(header.version, value!(31u8), call!(Eat::byte)) >>
     banned_spells: sod!(header.version, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
     banned_skills: sod!(header.version, value!(0u32), call!(Eat::long)) >>

@@ -162,54 +162,73 @@ macro_rules! mon_named_args (
 #[cfg(feature = "put")]
 macro_rules! mon_option (
     ($o:ident, $v:ident, $submac:ident!( $($args:tt)* )) => (
-        mon_switch!($i,
-            Eat::byte,
-            1u8 => map!($submac!($($args)*), |x| Some(x)) |
-            0u8 => value!(None)
+        mon_switch!($o, $v, mon_call!(Put::byte),
+            1u8 => mon_map!($submac!($($args)*), |x| Some(ref x)) |
+            0u8 => mon_value!(None)
         )
     );
     ($o:ident, $v:ident, $f:expr) => (
-        mon_option!($i, $v, mon_call!($f))
+        mon_option!($o, $v, mon_call!($f))
     );
 );
 
 #[cfg(feature = "put")]
 macro_rules! mon_switch (
-    (__impl $o:ident, $v:ident, $buf:ident, $tag:expr, ) => (
+    (__impl $o:ident, $v:ident, $buf:ident, $tag:ident!( $($targs:tt)* ), ) => (
         false
     );
 
-    (__impl $o:ident, $v:ident, $buf:ident, $tag:expr, | $x:expr => $arm:ident!( $($args:tt)* ) $($tail:tt)* ) => (
+    (__impl $o:ident, $v:ident, $buf:ident, $tag:ident!( $($targs:tt)* ), | $x:expr => $arm:ident!( $($aargs:tt)* ) $($tail:tt)* ) => (
         {
-            if $arm!($buf, $v, $($args)*) {
+            if $arm!($buf, $v, $($aargs)*) {
                 let var = &$x;
-                $tag($o, var);
+                $tag!($o, var, $($targs)* );
                 $o.extend_from_slice($buf);
                 true
             } else {
                 $buf.clear();
-                let res = mon_switch!(__impl $o, $v, $buf, $tag, $($tail)*);
+                let res = mon_switch!(__impl $o, $v, $buf, $tag!($($targs)*), $($tail)*);
                 res
             }
         }
     );
 
-    ($o:ident, $v:ident, $tag:expr, $($list:tt)* ) => (
+    ($o:ident, $v:ident, $tag:ident!( $($args:tt)* ), $($list:tt)* ) => (
         {
             let tempo = &mut Vec::new();
-            let res = mon_switch!(__impl $o, $v, tempo, $tag, | $($list)* );
+            let res = mon_switch!(__impl $o, $v, tempo, $tag!($($args)*), | $($list)* );
             res
         }
-    )
+    );
+
+    ($o:ident, $v:ident, $tag:expr, $($list:tt)* ) => (
+        mon_switch!($o, $v, mon_call!($tag), $($list)* );
+    );
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_take (
+    ($o:ident, $v:ident, $n:expr) => (
+        {
+            let n = $n;
+            if $v.len() < n { false } else {
+                $o.extend_from_slice(&$v[0..n]);
+                true
+            }
+        }
+    );
 );
 
 #[cfg(feature = "put")]
 macro_rules! mon_map (
-    ($o:ident, $v:ident, $f:expr, |$mi:ident| $($pat:tt)*) => (
-        {
-            let &$($pat)* = $v;
-            $f($o, $mi)
+    ($o:ident, $v:ident, $f:ident!( $($args:tt)* ), |$mi:ident| $pat:pat) => (
+        match *$v {
+            $pat => { let var = &$mi; $f!($o, var, $($args)* ) },
+            _ => false,
         }
+    );
+    ($o:ident, $v:ident, $f:expr, |$mi:ident| $pat:pat) => (
+        mon_map!($o, $v, mon_call!($f), |$mi| $pat);
     );
 );
 
@@ -254,9 +273,9 @@ macro_rules! mon_count (
 #[cfg(feature = "put")]
 macro_rules! mon_sod (
     ($o:ident, $v:ident, $ver:expr, $old:ident!( $($old_args:tt)* ), $sod:ident!( $($sod_args:tt)* )) => (
-        match *$ver {
-            H3MVersion::SoD => $sod!($o, $($sod_args)*),
-            _ => $old!($o, $($old_args)*),
+        match $ver {
+            H3MVersion::SoD => $sod!($o, $v, $($sod_args)*),
+            _ => $old!($o, $v, $($old_args)*),
         }
     );
 );
@@ -264,7 +283,7 @@ macro_rules! mon_sod (
 #[cfg(feature = "put")]
 macro_rules! mon_roe (
     ($o:ident, $v:ident, $ver:expr, $roe:ident!( $($roe_args:tt)* ), $new:ident!( $($new_args:tt)* )) => (
-        match *$ver {
+        match $ver {
             H3MVersion::RoE => $roe!($o, $v, $($roe_args)*),
             _ => $new!($o, $v, $($new_args)*),
         }
@@ -277,6 +296,13 @@ macro_rules! mon_value (
         // NOTE: will warn if $val is the only variant
         match *$v {
             $val => true,
+               _ => false,
+        }
+    );
+
+    ($o:ident, $v:ident, $val:pat, $junk:expr, $f:ident!( $($args:tt)* )) => (
+        match *$v {
+            $val => { let src = &$junk; $f!($o, src, $($args)*) },
                _ => false,
         }
     );
@@ -401,7 +427,7 @@ mon_named!(header<H3MHeader>, mon_do_parse!(
     name: mon_call!(Put::string) >>
     description: mon_call!(Put::string) >>
     difficulty: mon_call!(Put::difficulty) >>
-    level_cap: mon_roe!(version, mon_value!(0u8), mon_call!(Put::byte)) >>
+    level_cap: mon_roe!(*version, mon_value!(0u8), mon_call!(Put::byte)) >>
     (H3MHeader {
         ref version,
         ref has_players,
@@ -436,6 +462,12 @@ struct H3MLocation(u8, u8, bool);
 w_named!(location<H3MLocation>, do_parse!(
     x: call!(Eat::byte) >> y: call!(Eat::byte) >> u: call!(Eat::flag) >>
     (H3MLocation(x, y, u))
+));
+
+#[cfg(feature = "put")]
+mon_named!(location<H3MLocation>, mon_do_parse!(
+    x: mon_call!(Put::byte) >> y: mon_call!(Put::byte) >> u: mon_call!(Put::flag) >>
+    (H3MLocation(ref x, ref y, ref u))
 ));
 
 impl std::fmt::Debug for H3MLocation {
@@ -476,6 +508,14 @@ w_named_args!(main_town(version: H3MVersion)<H3MMainTown>, do_parse!(
     kind: roe!(version, value!(H3MTownKind::Random), call!(Eat::town_kind)) >>
     location: call!(Eat::location) >>
     (H3MMainTown { generate_hero, kind, location })
+));
+
+#[cfg(feature = "put")]
+mon_named_args!(main_town(version: H3MVersion)<H3MMainTown>, mon_do_parse!(
+    generate_hero: mon_roe!(version, mon_value!(true), mon_call!(Put::flag)) >>
+    kind: mon_roe!(version, mon_value!(H3MTownKind::Random), mon_call!(Put::town_kind)) >>
+    location: mon_call!(Put::location) >>
+    (H3MMainTown { ref generate_hero, ref kind, ref location })
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -692,6 +732,27 @@ w_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H3M
     )
 );
 
+#[cfg(feature = "put")]
+mon_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H3MPlayerAllowedAlignments>,
+    mon_switch!(mon_value!(playable),
+        true => mon_do_parse!(
+            unknown: mon_sod!(version, mon_value!(false), mon_call!(Put::flag)) >>
+            mask: mon_call!(Put::byte) >>
+            mask_ext: mon_roe!(version, mon_value!(1u8), mon_call!(Put::byte)) >>
+            random: mon_call!(Put::flag) >>
+            (H3MPlayerAllowedAlignments {
+                ref unknown, ref mask, ref mask_ext, ref random,
+            })
+        ) |
+        false => mon_value!(
+            H3MPlayerAllowedAlignments { unknown: false, mask: 0u8, mask_ext: 0u8, random: false },
+            [0xAA; 4], // NOTE: source of junk
+            mon_take!(match version { H3MVersion::RoE => 2, H3MVersion::AB => 3, H3MVersion::SoD => 4 })
+        )
+        // NOTE: if player is not playable, this contains junk, just eat it
+    )
+);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -733,10 +794,10 @@ w_named_args!(player(version: H3MVersion)<H3MPlayer>, do_parse!(
 #[cfg(feature = "put")]
 mon_named_args!(player(version: H3MVersion)<H3MPlayer>, mon_do_parse!(
     playability: mon_call!(Put::player_playability) >>
-    // allowed_alignments: mon_call!(Put::player_allowed_alignments, version, playability.human || playability.computer) >>
-    // main_town: mon_option!(mon_call!(Put::main_town, version)) >>
-    // random_hero: mon_call!(Put::flag) >>
-    // hero_type: mon_call!(Put::byte) >>
+    allowed_alignments: mon_call!(Put::player_allowed_alignments, version, playability.human || playability.computer) >>
+    main_town: mon_option!(mon_call!(Put::main_town, version)) >>
+    random_hero: mon_call!(Put::flag) >>
+    hero_type: mon_call!(Put::byte) >>
     // main_hero: mon_switch!(mon_value!(hero_type),
     //     0xFFu8 => mon_value!(None) |
     //     _ => mon_map!(Put::hero, |x| Some(x))

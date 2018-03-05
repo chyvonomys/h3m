@@ -245,15 +245,43 @@ macro_rules! mon_call (
 #[cfg(feature = "put")]
 macro_rules! mon_count (
     ($o:ident, $v:ident, $submac:ident!( $($args:tt)* ), $n:expr) => (
-        for i in 0..$n {
-            let v = $v[i];
-            $submac!($o, v, $($args)*);
+        {
+            if $v.len() == $n {
+                let mut res = true;
+                for i in 0..$n {
+                    let v = &$v[i];
+                    res = res && $submac!($o, v, $($args)*);
+                }
+                res
+            } else { false }
         }
     );
 );
 
 #[cfg(feature = "put")]
+macro_rules! mon_length_count (
+    ($o:ident, $v:ident, $len:ident!( $($largs:tt)* ), $item:ident!( $($iargs:tt)* )) => (
+        {
+            let n = &($v.len() as u32);
+            let mut res = true;
+            res = res && $len!($o, n, $($largs)* );
+            for i in 0..*n {
+                let v = &$v[i as usize];
+                res = res && $item!($o, v, $($iargs)* );
+            }
+            res
+        }
+    );
+    ($o:ident, $v:ident, $len:expr, $item:expr) => (
+        mon_length_count!($o, $v, mon_call!($len), mon_call!($item))
+    );
+);
+
+#[cfg(feature = "put")]
 macro_rules! mon_value (
+    ($o:ident, $v:ident, Vec::default()) => (
+        $v.is_empty()
+    );
     ($o:ident, $v:ident, $val:pat) => (
         // NOTE: will warn if $val is the only variant
         match *$v {
@@ -261,7 +289,6 @@ macro_rules! mon_value (
                _ => false,
         }
     );
-
     ($o:ident, $v:ident, $val:pat, $junk:expr, $f:ident!( $($args:tt)* )) => (
         match *$v {
             $val => { let src = &$junk; $f!($o, src, $($args)*) },
@@ -616,8 +643,8 @@ struct H3MPlayerAllowedAlignments {
 }
 
 w_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H3MPlayerAllowedAlignments>,
-    switch!(value!(playable),
-        true => do_parse!(
+    ifeq!(playable, true,
+        do_parse!(
             unknown: sod!(version, value!(false), call!(Eat::flag)) >>
             mask: call!(Eat::byte) >>
             mask_ext: ifeq!(version, H3MVersion::RoE, value!(1u8), call!(Eat::byte)) >>
@@ -625,8 +652,8 @@ w_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H3M
             (H3MPlayerAllowedAlignments {
                 unknown, mask, mask_ext, random,
             })
-        ) |
-        false => value!(
+        ),
+        value!(
             H3MPlayerAllowedAlignments { unknown: false, mask: 0u8, mask_ext: 0u8, random: false },
             take!(match version { H3MVersion::RoE => 2, H3MVersion::AB => 3, H3MVersion::SoD => 4 })
         )
@@ -636,8 +663,8 @@ w_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H3M
 
 #[cfg(feature = "put")]
 mon_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H3MPlayerAllowedAlignments>,
-    mon_switch!(mon_value!(playable),
-        true => mon_do_parse!(
+    mon_ifeq!(playable, true,
+        mon_do_parse!(
             unknown: mon_sod!(version, mon_value!(false), mon_call!(Put::flag)) >>
             mask: mon_call!(Put::byte) >>
             mask_ext: mon_ifeq!(version, H3MVersion::RoE, mon_value!(1u8), mon_call!(Put::byte)) >>
@@ -645,10 +672,10 @@ mon_named_args!(player_allowed_alignments(version: H3MVersion, playable: bool)<H
             (H3MPlayerAllowedAlignments {
                 ref unknown, ref mask, ref mask_ext, ref random,
             })
-        ) |
-        false => mon_value!(
+        ),
+        mon_value!(
             H3MPlayerAllowedAlignments { unknown: false, mask: 0u8, mask_ext: 0u8, random: false },
-            [0xAA; 4], // NOTE: source of junk
+            [0xAA, 0xBB, 0xCC, 0xDD], // NOTE: source of junk
             mon_take!(match version { H3MVersion::RoE => 2, H3MVersion::AB => 3, H3MVersion::SoD => 4 })
         )
         // NOTE: if player is not playable, this contains junk, just eat it
@@ -699,7 +726,7 @@ mon_named_args!(player(version: H3MVersion)<H3MPlayer>, mon_do_parse!(
     hero_type: mon_call!(Put::byte) >>
     main_hero: mon_ifeq!(hero_type, &0xFFu8, mon_value!(None), mon_map!(Put::hero, |x| Some(ref x))) >>
     num_placeholders: mon_ifeq!(version, H3MVersion::RoE, mon_value!(0u8), mon_call!(Put::byte)) >>
-    // heroes: mon_ifeq!(version, H3MVersion::RoE, mon_value!(Vec::default()), mon_length_count!(Put::long, Put::hero)) >>
+    heroes: mon_ifeq!(version, H3MVersion::RoE, mon_value!(Vec::default()), mon_length_count!(Put::long, Put::hero)) >>
     (H3MPlayer {
         ref playability,
         ref allowed_alignments,
@@ -1558,6 +1585,40 @@ w_named!(h3m<H3MFile>, do_parse!(
     })
 ));
 
+mon_named!(h3m<H3MFile>, mon_do_parse!(
+    header: mon_call!(Put::header) >>
+    players: mon_count!(mon_call!(Put::player, header.version), 8) >>
+    // victory: mon_call!(Put::special_victory, header.version) >>
+    // loss: call!(Eat::loss) >>
+    // teams: switch!(Eat::byte,
+    //     0u8 => value!(None) |
+    //     _ => map!(count_fixed!(u8, Eat::byte, 8), |x| Some(x))
+    // ) >>
+    // available_heroes: call!(Eat::available_heroes, header.version) >>
+    // _zeroes: tag!([0u8; 31]) >>
+    // banned_artifacts: ifeq!(header.version, H3MVersion::RoE, value!([0u8; 17]), count_fixed!(u8, Eat::byte, 17)) >>
+    // banned_artifacts_ext: sod!(header.version, value!(31u8), call!(Eat::byte)) >>
+    // banned_spells: sod!(header.version, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
+    // banned_skills: sod!(header.version, value!(0u32), call!(Eat::long)) >>
+    // rumors: length_count!(Eat::long, tuple!(Eat::string, Eat::string)) >>
+    // heroes: count!(sod!(header.version, value!(None), option!(Eat::hero_customization)), 156) >>
+    // land: count!(Eat::tile, header.get_width() * header.get_height()) >>
+    // underground: switch!(value!(header.has_underground),
+    //     false => value!(None) |
+    //     true => map!(count!(Eat::tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { tiles }))
+    // ) >>
+    // object_templates: length_count!(Eat::long, Eat::object_template) >>
+    // objects: length_count!(Eat::long, call!(Eat::object, header.version, &object_templates)) >>
+    // events: length_count!(Eat::long, call!(Eat::event, header.version)) >>
+    // _trailing_zeroes: count!(tag!([0u8]), 124) >>
+    (H3MFile {
+        ref header, ref players, .. /* victory, loss, teams, available_heroes,
+        banned_artifacts, banned_artifacts_ext, banned_spells, banned_skills, rumors, heroes,
+        land: H3MMap { tiles: land }, underground,
+        object_templates, objects, events */
+    })
+));
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 impl H3MRoadTopology {
@@ -1688,8 +1749,7 @@ fn main() {
                     #[cfg(feature = "put")]
                     {
                         let out = &mut Vec::new();
-                        Put::header(out, &doc.header);
-                        Put::player(out, &doc.players[0], doc.header.version);
+                        assert_eq!(Put::h3m(out, &doc), true);
 
                         let ori = hex_dump(&bin[0..out.len()]);
                         let rev = hex_dump(&out);

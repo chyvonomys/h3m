@@ -189,6 +189,23 @@ macro_rules! mon_switch (
 );
 
 #[cfg(feature = "put")]
+macro_rules! mon_alt (
+    ($o:ident, $v:ident, mon_tag!($tag:expr) => { |_| None } | $case:ident!( $($args:tt)* ) => { |$x:ident| $pat:pat }) => (
+        match *$v {
+            None => { let _t = &$tag; mon_tag!($o, _t, $tag) },
+            $pat => { let val = $x; $case!($o, val, $($args)*) },
+        }
+    );
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_tag (
+    ($o:ident, $v:ident, $tag:expr) => (
+        { $o.extend_from_slice(&$tag); true }
+    );
+);
+
+#[cfg(feature = "put")]
 macro_rules! mon_take (
     ($o:ident, $v:ident, $n:expr) => (
         {
@@ -205,12 +222,19 @@ macro_rules! mon_take (
 macro_rules! mon_map (
     ($o:ident, $v:ident, $f:ident!( $($args:tt)* ), |$mi:ident| $pat:pat) => (
         match *$v {
-            $pat => { let var = &$mi; $f!($o, var, $($args)* ) },
+            $pat => $f!($o, $mi, $($args)* ),
             _ => false,
         }
     );
     ($o:ident, $v:ident, $f:expr, |$mi:ident| $pat:pat) => (
         mon_map!($o, $v, mon_call!($f), |$mi| $pat);
+    );
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_peek (
+    ($o:ident, $v:ident, $($irrel:tt)* ) => (
+        true // TODO: what if irrel is complex macro
     );
 );
 
@@ -491,49 +515,39 @@ impl std::fmt::Debug for H3MResources {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-struct H3MArtifact(u16);
+struct H3MArtifact(u8, u8);
 
-w_named!(artifact1<H3MArtifact>, map!(Eat::byte, |i| H3MArtifact(if i == 0xFF { 0xFFFF } else { i as u16 })));
-w_named!(artifact2<H3MArtifact>, map!(Eat::short, |i| H3MArtifact(i)));
+w_named!(artifact1<H3MArtifact>, map!(Eat::byte, |i| H3MArtifact(i, 0)));
+w_named!(artifact2<H3MArtifact>, do_parse!(i: call!(Eat::byte) >> j: call!(Eat::byte) >> (H3MArtifact(i, j))));
 
 w_named_args!(artifact(version: H3MVersion)<H3MArtifact>,
     ifeq!(version, H3MVersion::RoE, call!(Eat::artifact1), call!(Eat::artifact2))
 );
 
+mon_named!(artifact1<H3MArtifact>, mon_map!(Put::byte, |i| H3MArtifact(ref i, 0)));
+mon_named!(artifact2<H3MArtifact>, mon_do_parse!(i: mon_call!(Put::byte) >> j: mon_call!(Put::byte) >> (H3MArtifact(ref i, ref j))));
+
+mon_named_args!(artifact(version: H3MVersion)<H3MArtifact>,
+    mon_ifeq!(version, H3MVersion::RoE, mon_call!(Put::artifact1), mon_call!(Put::artifact2))
+);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, Copy)]
-struct H3MCreature(u16);
+struct H3MCreature(u8, u8);
 
-w_named!(creature1<H3MCreature>, map!(Eat::byte, |i| H3MCreature(if i == 0xFF { 0xFFFF } else { i as u16 })));
-w_named!(creature2<H3MCreature>, map!(Eat::short, |i| H3MCreature(i)));
+w_named!(creature1<H3MCreature>, map!(Eat::byte, |i| H3MCreature(i, 0)));
+w_named!(creature2<H3MCreature>, do_parse!(i: call!(Eat::byte) >> j: call!(Eat::byte) >> (H3MCreature(i, j))));
 
 w_named_args!(creature(version: H3MVersion)<H3MCreature>,
     ifeq!(version, H3MVersion::RoE, call!(Eat::creature1), call!(Eat::creature2))
 );
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
+mon_named!(creature1<H3MCreature>, mon_map!(Put::byte, |i| H3MCreature(ref i, 0)));
+mon_named!(creature2<H3MCreature>, mon_do_parse!(i: mon_call!(Put::byte) >> j: mon_call!(Put::byte) >> (H3MCreature(ref i, ref j))));
 
-#[derive(Debug)]
-struct H3MSpecialVictoryCondition {
-    condition: H3MVictoryCondition,
-    or_default: bool,
-    cpu_allowed: bool,
-}
-
-w_named_args!(special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondition>>,
-    switch!(peek!(Eat::byte),
-        0xFF => value!(None, Eat::byte) |
-        _ => do_parse!(
-            code: call!(Eat::byte) >>
-            or_default: call!(Eat::flag) >>
-            cpu_allowed: call!(Eat::flag) >>
-            condition: call!(Eat::victory, version, code) >>
-            (Some(H3MSpecialVictoryCondition {
-                condition, or_default, cpu_allowed
-            }))
-        )
-    )
+mon_named_args!(creature(version: H3MVersion)<H3MCreature>,
+    mon_ifeq!(version, H3MVersion::RoE, mon_call!(Put::creature1), mon_call!(Put::creature2))
 );
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -553,23 +567,44 @@ enum H3MVictoryCondition {
     TransportArtifact(H3MArtifact, H3MLocation), // NOTE: all versions artifact v1 here
 }
 
-w_named_args!(victory(version: H3MVersion, code: u8)<H3MVictoryCondition>, switch!(value!(code),
-    0x00 => map!(call!(Eat::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(art)) |
-    0x01 => do_parse!(cr: call!(Eat::creature, version) >> amount: call!(Eat::long) >>
-                      (H3MVictoryCondition::AccumCreatures(cr, amount))) |
-    0x02 => do_parse!(res: call!(Eat::resource) >> amount: call!(Eat::long) >>
-                      (H3MVictoryCondition::AccumResources(res, amount))) |
-    0x03 => do_parse!(loc: call!(Eat::location) >> hall: call!(Eat::hall_level) >> castle: call!(Eat::castle_level) >>
-                      (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
-    0x04 => map!(alt!(tag!([0xFF; 3]) => { |_| None } | call!(Eat::location) => { |x| Some(x) }),
-        |loc| H3MVictoryCondition::BuildGrail(loc)) |
-    0x05 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
-    0x06 => map!(Eat::location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
-    0x07 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
-    0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
-    0x09 => value!(H3MVictoryCondition::FlagAllMines) |
-    0x0A => map!(tuple!(Eat::artifact1, Eat::location), |p| H3MVictoryCondition::TransportArtifact(p.0, p.1))
-));
+#[derive(Debug)]
+struct H3MSpecialVictoryCondition {
+    condition: H3MVictoryCondition,
+    or_default: bool,
+    cpu_allowed: bool,
+}
+
+w_named_args!(special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondition>>,
+    alt!(
+        tag!([0xFF]) => { |_| None } |
+        do_parse!(
+            code: call!(Eat::byte) >>
+            or_default: call!(Eat::flag) >>
+            cpu_allowed: call!(Eat::flag) >>
+            condition: switch!(value!(code),
+                0x00 => map!(call!(Eat::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(art)) |
+                0x01 => do_parse!(cr: call!(Eat::creature, version) >> amount: call!(Eat::long) >>
+                    (H3MVictoryCondition::AccumCreatures(cr, amount))) |
+                0x02 => do_parse!(res: call!(Eat::resource) >> amount: call!(Eat::long) >>
+                    (H3MVictoryCondition::AccumResources(res, amount))) |
+                0x03 => do_parse!(loc: call!(Eat::location) >> hall: call!(Eat::hall_level) >> castle: call!(Eat::castle_level) >>
+                    (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
+                0x04 => map!(alt!(tag!([0xFF; 3]) => { |_| None } | call!(Eat::location) => { |x| Some(x) }),
+                    |loc| H3MVictoryCondition::BuildGrail(loc)) |
+                0x05 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
+                0x06 => map!(Eat::location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
+                0x07 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
+                0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
+                0x09 => value!(H3MVictoryCondition::FlagAllMines) |
+                0x0A => do_parse!(art: call!(Eat::artifact1) >> loc: call!(Eat::location) >>
+                    (H3MVictoryCondition::TransportArtifact(art, loc)))
+            ) >>
+            (H3MSpecialVictoryCondition {
+                condition, or_default, cpu_allowed
+            })
+        ) => { |x| Some(x) }
+    )
+);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -602,6 +637,7 @@ w_named!(hero<H3MHero>, do_parse!(
     (H3MHero { face, name })
 ));
 
+#[cfg(feature = "put")]
 mon_named!(hero<H3MHero>, mon_do_parse!(
     face: mon_call!(Put::byte) >>
     name: mon_call!(Put::string) >>
@@ -819,7 +855,7 @@ w_named_args!(hero_equipment(version: H3MVersion)<H3MHeroEquipment>, do_parse!(
     machine3: call!(Eat::artifact, version) >>
     machine4: call!(Eat::artifact, version) >>
     spellbook: call!(Eat::artifact, version) >>
-    misc5: sod!(version, value!(H3MArtifact(0xFFFF)), call!(Eat::artifact2)) >>
+    misc5: sod!(version, value!(H3MArtifact(0xFF, 0xFF)), call!(Eat::artifact2)) >>
     backpack: length_count!(Eat::short, call!(Eat::artifact, version)) >>
     (H3MHeroEquipment {
         head, shoulders, neck,
@@ -1585,6 +1621,7 @@ w_named!(h3m<H3MFile>, do_parse!(
     })
 ));
 
+#[cfg(feature = "put")]
 mon_named!(h3m<H3MFile>, mon_do_parse!(
     header: mon_call!(Put::header) >>
     players: mon_count!(mon_call!(Put::player, header.version), 8) >>

@@ -305,8 +305,8 @@ macro_rules! forget (
 
 #[cfg(feature = "put")]
 macro_rules! mon_call (
-    ($o:ident, $v:ident, $f:expr $(,$arg:expr)*) => (
-        $f($o, $v $(,$arg)*)
+    ($o:ident, $v:ident, $f:expr $(, $args:expr)* ) => (
+        $f($o, $v $(, $args)* )
     );
 );
 
@@ -350,6 +350,9 @@ macro_rules! mon_length_count (
             res
         }
     );
+    ($o:ident, $v:ident, $len:expr, $item:ident!( $($iargs:tt)* )) => (
+        mon_length_count!($o, $v, mon_call!($len), $item!( $($iargs)* ))
+    );
     ($o:ident, $v:ident, $len:expr, $item:expr) => (
         mon_length_count!($o, $v, mon_call!($len), mon_call!($item))
     );
@@ -357,8 +360,17 @@ macro_rules! mon_length_count (
 
 #[cfg(feature = "put")]
 macro_rules! mon_value (
-    ($o:ident, $v:ident, Vec::default()) => (
-        $v.is_empty()
+    ($o:ident, $v:ident, $t:ident ::default()) => (
+        true
+    );
+    ($o:ident, $v:ident, [$x:expr; $n:expr]) => (
+        if $v.len() == $n {
+            let mut res = true;
+            for i in 0..$n {
+                res = res && $v[i] == $x;
+            }
+            res
+        } else { false }
     );
     ($o:ident, $v:ident, $val:pat) => (
         // NOTE: will warn if $val is the only variant
@@ -369,9 +381,22 @@ macro_rules! mon_value (
     );
     ($o:ident, $v:ident, $val:pat, $junk:expr, $f:ident!( $($args:tt)* )) => (
         match *$v {
-            $val => { let src = &$junk; $f!($o, src, $($args)*) },
+            $val => { let _src = &$junk; $f!($o, _src, $($args)*) },
                _ => false,
         }
+    );
+);
+
+#[cfg(feature = "put")]
+macro_rules! mon_tuple (
+    (__impl $o:ident, $v:ident, [ $( $f:ident: $p:ident!( $($args:tt)* ) )* ] ) => (
+        mon_do_parse!($o, $v, $($f: $p!( $($args)* ) >>)* (($(ref $f),*)) )
+    );
+    (__impl $o:ident, $v:ident, [ $( $f:ident: $p:ident!( $($args:tt)* ) )* ] $h:ident!( $($hargs:tt)* ) $(, $t:ident!( $($targs:tt)* ) )* ) => (
+        mon_tuple!(__impl $o, $v, [ $( $f : $p!( $($args)* ) )* fff : $h!( $($hargs)* ) ] $($t!( $($targs)* )),* )
+    );
+    ($o:ident, $v:ident, $($t:expr),*) => (
+        mon_tuple!(__impl $o, $v, [] $( mon_call!($t) ),* )
     );
 );
 
@@ -510,21 +535,25 @@ impl std::fmt::Debug for H3MLocation {
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-struct H3MSpellsMask(u32, u32, u8);
+struct H3MSpellsMask((u32, u32, u8));
 
 w_named!(spells_mask<H3MSpellsMask>,
-       map!(tuple!(Eat::long, Eat::long, Eat::byte), |t| H3MSpellsMask(t.0, t.1, t.2))
+       map!(tuple!(Eat::long, Eat::long, Eat::byte), |t| H3MSpellsMask(t))
+);
+
+mon_named!(spells_mask<H3MSpellsMask>,
+       mon_map!(mon_tuple!(Put::long, Put::long, Put::byte), |t| H3MSpellsMask(ref t))
 );
 
 impl Default for H3MSpellsMask {
     fn default() -> Self {
-        H3MSpellsMask(0u32, 0u32, 0u8)
+        H3MSpellsMask((0u32, 0u32, 0u8))
     }
 }
 
 impl std::fmt::Debug for H3MSpellsMask {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "<{:08b} {:032b} {:032b}>", self.2, self.1, self.0) // first bit last
+        write!(f, "<{:08b} {:032b} {:032b}>", (self.0).2, (self.0).1, (self.0).0) // first bit last
     }
 }
 
@@ -1717,7 +1746,8 @@ w_named!(h3m<H3MFile>, do_parse!(
         ) => { |p| Some(p) }
     ) >>
     available_heroes: call!(Eat::available_heroes, header.version) >>
-    _zeroes: tag!([0u8; 31]) >>
+    _zeroes: value!((), tag!([0u8; 31])) >>
+    _z: forget!(_zeroes, ()) >>
     banned_artifacts: ifeq!(header.version, H3MVersion::RoE, value!([0u8; 17]), count_fixed!(u8, Eat::byte, 17)) >>
     banned_artifacts_ext: sod!(header.version, value!(31u8), call!(Eat::byte)) >>
     banned_spells: sod!(header.version, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
@@ -1756,8 +1786,16 @@ mon_named!(h3m<H3MFile>, mon_do_parse!(
         ) => { |p| Some(ref p) }
     ) >>
     available_heroes: mon_call!(Put::available_heroes, header.version) >>
+    _zeroes: mon_value!((), [0u8; 31], mon_tag!([0u8; 31])) >>
+    _z: mon_forget!(_zeroes, ()) >>
+    banned_artifacts: mon_ifeq!(header.version, H3MVersion::RoE, mon_value!([0u8; 17]), mon_count_fixed!(u8, Put::byte, 17)) >>
+    banned_artifacts_ext: mon_sod!(header.version, mon_value!(31u8), mon_call!(Put::byte)) >>
+    banned_spells: mon_sod!(header.version, mon_value!(H3MSpellsMask::default()), mon_call!(Put::spells_mask)) >>
+    banned_skills: mon_sod!(header.version, mon_value!(0u32), mon_call!(Put::long)) >>
+    rumors: mon_length_count!(Put::long, mon_tuple!(Put::string, Put::string)) >>
     (H3MFile {
         ref header, ref players, ref victory, ref loss, ref teams, ref available_heroes,
+        ref banned_artifacts, ref banned_artifacts_ext, ref banned_spells, ref banned_skills, ref rumors, 
         ..
     })
 ));

@@ -200,7 +200,7 @@ macro_rules! mon_alt (
 
 #[cfg(feature = "put")]
 macro_rules! mon_tag (
-    ($o:ident, $v:ident, $tag:expr) => (
+    ($o:ident, $ignore:expr, $tag:expr) => (
         { $o.extend_from_slice(&$tag); true }
     );
 );
@@ -231,31 +231,83 @@ macro_rules! mon_map (
     );
 );
 
+use std::ops::IndexMut;
+
 #[cfg(feature = "put")]
-macro_rules! mon_peek (
-    ($o:ident, $v:ident, $($irrel:tt)* ) => (
-        true // TODO: what if irrel is complex macro
+macro_rules! mon_do_parse (
+    (__impl $stack:ident, $res:expr,  $var:ident : $head:ident!( $($args:tt)* ) >> ) => (
+        let last = $stack.len();
+        $stack.push(Vec::new());
+        {
+            let tempo = $stack.index_mut(last);
+            $res = $res && $head!(tempo, $var, $($args)* );
+        }
+    );
+
+    (__impl $stack:ident, $res:expr,  $ign:ident : mon_forget!( $var:ident, $def:expr ) >>
+                                   $(   $x:ident :   $y:ident!( $($z:tt)*             ) >> )* ) => (
+        let ref mut $var = $def;
+        mon_do_parse!(__impl $stack, $res, $( $x : $y!( $($z)* ) >> )* );
+    );
+    
+    (__impl $stack:ident, $res:expr,  $var:ident : $head:ident!( $($args:tt)* ) >>
+                                   $(   $x:ident :    $y:ident!( $(   $z:tt)* ) >> )* ) => (
+        let last = $stack.len();
+        $stack.push(Vec::new());
+        {
+            let tempo = $stack.index_mut(last);
+            $res = $res && $head!(tempo, $var, $($args)* );
+        }
+        mon_do_parse!(__impl $stack, $res, $( $x : $y!( $($z)* ) >> )* );
+    );
+
+    (__rev $stack:ident, $res:expr, ^ $( $rx:ident : $ry:ident!( $($rz:tt)* ) >> )* ) => (
+        mon_do_parse!(__impl $stack, $res, $( $rx : $ry!( $($rz)* ) >> )* )
+    );
+
+    (__rev $stack:ident, $res:expr, $hx:ident : $hy:ident!( $($hz:tt)* ) >>
+                                 $( $tx:ident : $ty:ident!( $($tz:tt)* ) >> )*
+                               ^ $( $rx:ident : $ry:ident!( $($rz:tt)* ) >> )* ) => (
+        mon_do_parse!(__rev $stack, $res, $( $tx : $ty!( $($tz)* ) >> )*
+                                           ^ $hx : $hy!( $($hz)* ) >>
+                                          $( $rx : $ry!( $($rz)* ) >> )* )
+    );
+
+    ($o:ident, $v:ident,    $( $x:ident : $y:ident!( $($z:tt)* ) >> )*   ( $pat:pat ) ) => (
+        match $v {
+            &$pat => {
+                let mut stack = Vec::new();
+                let mut res = true;
+                mon_do_parse!(__rev stack, res, $( $x : $y!( $($z)* ) >> )* ^ );
+                if res {
+                    stack.reverse();
+                    for x in stack {
+                        $o.extend_from_slice(&x);
+                    }
+                }
+                res
+            },
+            _ => false,
+        }
+    );
+);
+
+macro_rules! variable (
+    ($i:expr, $v:ident) => (
+        value!($i, $v)
     );
 );
 
 #[cfg(feature = "put")]
-macro_rules! mon_do_parse (
-    (__impl $o:ident, $res:expr, $var:ident : $last:ident!( $($args:tt)* ) >> ) => (
-        $res = $res && $last!($o, $var, $($args)* );
+macro_rules! mon_variable (
+    ($o:ident, $v:ident, $var:ident) => (
+        *$var = *$v;
     );
-    
-    (__impl $o:ident, $res:expr, $var:ident : $head:ident!( $($args:tt)* ) >> $($tail:tt)* ) => (
-        $res = $res && $head!($o, $var, $($args)* );
-        mon_do_parse!(__impl $o, $res, $($tail)* );
-    );
+);
 
-    ($o:ident, $v:ident, $( $var:ident : $func:ident!( $($args:tt)* ) >> )*  ( $($pat:tt)* ) ) => (
-        {
-            let &$($pat)* = $v;
-            let mut res = true;
-            mon_do_parse!(__impl $o, res, $( $var : $func!( $($args)* ) >> )* );
-            res
-        }
+macro_rules! forget (
+    ($i:expr, $v:ident, $x:expr) => (
+        value!($i, ())
     );
 );
 
@@ -581,7 +633,7 @@ w_named_args!(special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondi
             code: call!(Eat::byte) >>
             or_default: call!(Eat::flag) >>
             cpu_allowed: call!(Eat::flag) >>
-            condition: switch!(value!(code),
+            condition: switch!(variable!(code),
                 0x00 => map!(call!(Eat::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(art)) |
                 0x01 => do_parse!(cr: call!(Eat::creature, version) >> amount: call!(Eat::long) >>
                     (H3MVictoryCondition::AccumCreatures(cr, amount))) |
@@ -599,10 +651,45 @@ w_named_args!(special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondi
                 0x0A => do_parse!(art: call!(Eat::artifact1) >> loc: call!(Eat::location) >>
                     (H3MVictoryCondition::TransportArtifact(art, loc)))
             ) >>
+            _code: forget!(code, 0xFF) >>
             (H3MSpecialVictoryCondition {
                 condition, or_default, cpu_allowed
             })
         ) => { |x| Some(x) }
+    )
+);
+
+#[cfg(feature = "put")]
+mon_named_args!(special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondition>>,
+    mon_alt!(
+        mon_tag!([0xFF]) => { |_| None } |
+        mon_do_parse!(
+            code: mon_call!(Put::byte) >>
+            or_default: mon_call!(Put::flag) >>
+            cpu_allowed: mon_call!(Put::flag) >>
+            condition: mon_switch!(mon_variable!(code),
+                0x00 => mon_map!(mon_call!(Put::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(ref art)) |
+                0x01 => mon_do_parse!(cr: mon_call!(Put::creature, version) >> amount: mon_call!(Put::long) >>
+                    (H3MVictoryCondition::AccumCreatures(ref cr, ref amount))) |
+                0x02 => mon_do_parse!(res: mon_call!(Put::resource) >> amount: mon_call!(Put::long) >>
+                    (H3MVictoryCondition::AccumResources(ref res, ref amount))) |
+                0x03 => mon_do_parse!(loc: mon_call!(Put::location) >> hall: mon_call!(Put::hall_level) >> castle: mon_call!(Put::castle_level) >>
+                    (H3MVictoryCondition::UpgradeTown(ref loc, ref hall, ref castle))) |
+                0x04 => mon_map!(mon_alt!(mon_tag!([0xFF; 3]) => { |_| None } | mon_call!(Put::location) => { |x| Some(ref x) }),
+                    |loc| H3MVictoryCondition::BuildGrail(ref loc)) |
+                0x05 => mon_map!(Put::location, |loc| H3MVictoryCondition::DefeatHero(ref loc)) |
+                0x06 => mon_map!(Put::location, |loc| H3MVictoryCondition::CaptureTown(ref loc)) |
+                0x07 => mon_map!(Put::location, |loc| H3MVictoryCondition::DefeatMonster(ref loc)) |
+                0x08 => mon_value!(H3MVictoryCondition::FlagAllDwellings) |
+                0x09 => mon_value!(H3MVictoryCondition::FlagAllMines) |
+                0x0A => mon_do_parse!(art: mon_call!(Put::artifact1) >> loc: mon_call!(Put::location) >>
+                    (H3MVictoryCondition::TransportArtifact(ref art, ref loc)))
+            ) >>
+            _code: mon_forget!(code, 0xFF) >>
+            (H3MSpecialVictoryCondition {
+                ref condition, ref or_default, ref cpu_allowed
+            })
+        ) => { |x| Some(ref x) }
     )
 );
 
@@ -1625,7 +1712,7 @@ w_named!(h3m<H3MFile>, do_parse!(
 mon_named!(h3m<H3MFile>, mon_do_parse!(
     header: mon_call!(Put::header) >>
     players: mon_count!(mon_call!(Put::player, header.version), 8) >>
-    // victory: mon_call!(Put::special_victory, header.version) >>
+    victory: mon_call!(Put::special_victory, header.version) >>
     // loss: call!(Eat::loss) >>
     // teams: switch!(Eat::byte,
     //     0u8 => value!(None) |
@@ -1649,7 +1736,7 @@ mon_named!(h3m<H3MFile>, mon_do_parse!(
     // events: length_count!(Eat::long, call!(Eat::event, header.version)) >>
     // _trailing_zeroes: count!(tag!([0u8]), 124) >>
     (H3MFile {
-        ref header, ref players, .. /* victory, loss, teams, available_heroes,
+        ref header, ref players, ref victory, .. /* loss, teams, available_heroes,
         banned_artifacts, banned_artifacts_ext, banned_spells, banned_skills, rumors, heroes,
         land: H3MMap { tiles: land }, underground,
         object_templates, objects, events */

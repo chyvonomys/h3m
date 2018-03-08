@@ -324,6 +324,9 @@ macro_rules! mon_count (
             } else { false }
         }
     );
+    ($o:ident, $v:ident, $sub:expr, $n:expr) => (
+        mon_count!($o, $v, mon_call!($sub), $n)
+    );
 );
 
 #[cfg(feature = "put")]
@@ -1011,6 +1014,36 @@ w_named_args!(hero_equipment(version: H3MVersion)<H3MHeroEquipment>, do_parse!(
     })
 ));
 
+mon_named_args!(hero_equipment(version: H3MVersion)<H3MHeroEquipment>, mon_do_parse!(
+    head: mon_call!(Put::artifact, version) >>
+    shoulders: mon_call!(Put::artifact, version) >>
+    neck: mon_call!(Put::artifact, version) >>
+    rhand: mon_call!(Put::artifact, version) >>
+    lhand: mon_call!(Put::artifact, version) >>
+    torso: mon_call!(Put::artifact, version) >>
+    rring: mon_call!(Put::artifact, version) >>
+    lring: mon_call!(Put::artifact, version) >>
+    feet: mon_call!(Put::artifact, version) >>
+    misc1: mon_call!(Put::artifact, version) >>
+    misc2: mon_call!(Put::artifact, version) >>
+    misc3: mon_call!(Put::artifact, version) >>
+    misc4: mon_call!(Put::artifact, version) >>
+    machine1: mon_call!(Put::artifact, version) >>
+    machine2: mon_call!(Put::artifact, version) >>
+    machine3: mon_call!(Put::artifact, version) >>
+    machine4: mon_call!(Put::artifact, version) >>
+    spellbook: mon_call!(Put::artifact, version) >>
+    misc5: mon_sod!(version, mon_value!(H3MArtifact(0xFF, 0xFF)), mon_call!(Put::artifact2)) >>
+    backpack: mon_length_count!(Put::short, mon_call!(Put::artifact, version)) >>
+    (H3MHeroEquipment {
+        ref head, ref shoulders, ref neck,
+        ref rhand, ref lhand, ref torso, ref rring, ref lring, ref feet,
+        ref misc1, ref misc2, ref misc3, ref misc4, ref misc5,
+        ref machine1, ref machine2, ref machine3, ref machine4,
+        ref spellbook, ref backpack,
+    })
+));
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Whole struct is SoD only
@@ -1038,39 +1071,47 @@ w_named!(hero_customization<H3MHeroCustomization>, do_parse!(
     })
 ));
 
+mon_named!(hero_customization<H3MHeroCustomization>, mon_do_parse!(
+    exp: mon_option!(Put::long) >>
+    skills: mon_option!(mon_length_count!(Put::long, mon_tuple!(Put::skill, Put::skill_level))) >>
+    equipment: mon_option!(mon_call!(Put::hero_equipment, H3MVersion::SoD)) >>
+    bio: mon_option!(Put::string) >>
+    gender: mon_call!(Put::hero_gender) >>
+    spells: mon_option!(Put::spells_mask) >>
+    stats: mon_option!(mon_tuple!(Put::byte, Put::byte, Put::byte, Put::byte)) >>
+    (H3MHeroCustomization {
+        ref exp, ref skills, ref equipment, ref bio, ref gender, ref spells, ref stats,
+    })
+));
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct H3MTile {
     terrain: H3MTerrainType,
     texture: u8,
-    flip_terrain_x: bool,
-    flip_terrain_y: bool,
     river_type: H3MRiverType,
     river_topo: H3MRiverTopology,
-    flip_river_x: bool,
-    flip_river_y: bool,
     road_type: H3MRoadType,
     road_topo: H3MRoadTopology,
-    flip_road_x: bool,
-    flip_road_y: bool,
+    mirror: u8,
 }
 
 impl std::fmt::Debug for H3MTile {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "<{:?}:{:?}{}{}{}{}>",
             self.terrain, self.texture,
-            if self.flip_terrain_x { "-" } else { "" },
-            if self.flip_terrain_y { "|" } else { "" },
+            if self.mirror & 2 == 2 { "-" } else { "" },
+            if self.mirror & 1 == 1 { "|" } else { "" },
             if let H3MRiverType::RvNone = self.river_type { "".to_owned() } else {
                 format!(" {:?}:{:?}{}{}", self.river_type, self.river_topo,
-                        if self.flip_river_x { "-" } else { "" },
-                        if self.flip_river_y { "|" } else { "" },
+                        if self.mirror & 8 == 8 { "-" } else { "" },
+                        if self.mirror & 4 == 4 { "|" } else { "" },
                 )
             },
             if let H3MRoadType::RdNone = self.road_type { "".to_owned() } else {
                 format!(" {:?}:{:?}{}{}", self.road_type, self.road_topo,
-                        if self.flip_road_x { "-" } else { "" },
-                        if self.flip_road_y { "|" } else { "" },
+                        if self.mirror & 32 == 32 { "-" } else { "" },
+                        if self.mirror & 16 == 16 { "|" } else { "" },
                 )
             },
         )
@@ -1089,12 +1130,23 @@ w_named!(tile<H3MTile>, do_parse!(
         terrain, texture,
         river_type, river_topo,
         road_type, road_topo,
-        flip_terrain_y: mirror & 1 == 1,
-        flip_terrain_x: mirror & 2 == 2,
-        flip_river_y: mirror & 4 == 4,
-        flip_river_x: mirror & 8 == 8,
-        flip_road_y: mirror & 16 == 16,
-        flip_road_x: mirror & 32 == 32
+        mirror
+    })
+));
+
+mon_named!(tile<H3MTile>, mon_do_parse!(
+    terrain: mon_call!(Put::terrain_type) >>
+    texture: mon_call!(Put::byte) >>
+    river_type: mon_call!(Put::river_type) >>
+    river_topo: mon_call!(Put::river_topo) >>
+    road_type: mon_call!(Put::road_type) >>
+    road_topo: mon_call!(Put::road_topo) >>
+    mirror: mon_call!(Put::byte) >>
+    (H3MTile {
+        ref terrain, ref texture,
+        ref river_type, ref river_topo,
+        ref road_type, ref road_topo,
+        ref mirror
     })
 ));
 
@@ -1136,10 +1188,23 @@ w_named!(object_template<H3MObjectTemplate>, do_parse!(
     _zeroes: tag!([0u8; 16]) >>
     (H3MObjectTemplate {
         filename, shape_mask, visit_mask, terrain_type_mask,
-        class: if let (H3MObjectClass::Mine, 7) = (class, subclass) {
-            H3MObjectClass::AbandonedMine
-        } else { class },
-        subclass, group, is_overlay,
+        class, subclass, group, is_overlay,
+    })
+));
+
+mon_named!(object_template<H3MObjectTemplate>, mon_do_parse!(
+    filename: mon_call!(Put::string) >>
+    shape_mask: mon_count_fixed!(u8, Put::byte, 6) >>
+    visit_mask: mon_count_fixed!(u8, Put::byte, 6) >>
+    terrain_type_mask: mon_call!(Put::long) >>
+    class: mon_call!(Put::obj_class) >>
+    subclass: mon_call!(Put::long) >>
+    group: mon_call!(Put::byte) >>
+    is_overlay: mon_call!(Put::flag) >>
+    _zeroes: mon_tag!([0u8; 16]) >>
+    (H3MObjectTemplate {
+        ref filename, ref shape_mask, ref visit_mask, ref terrain_type_mask,
+        ref class, ref subclass, ref group, ref is_overlay,
     })
 ));
 
@@ -1628,13 +1693,14 @@ w_named_args!(obj_noprops(_v: H3MVersion)<H3MObjectProperties>, value!(H3MObject
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 impl H3MObjectClass {
-    fn props_parser(&self) -> fn (&[u8], H3MVersion) -> nom::IResult<&[u8], H3MObjectProperties> {
+    fn props_parser(&self, subclass: u32) -> fn (&[u8], H3MVersion) -> nom::IResult<&[u8], H3MObjectProperties> {
         use H3MObjectClass::*;
         match *self {
             Hero | Prison | RandomHero => Eat::obj_hero,
             RandomTown | Town => Eat::obj_town,
             Monster | RandomMonster | RandomMonster1 | RandomMonster2 | RandomMonster3 |
             RandomMonster4 | RandomMonster5 | RandomMonster6 | RandomMonster7 => Eat::obj_monster,
+            Mine if subclass == 7 => Eat::obj_abandoned,
             CreatureGenerator1 | CreatureGenerator2 | CreatureGenerator3 | CreatureGenerator4 |
             Lighthouse | Mine | Shipyard => Eat::obj_owned,
             Artifact | RandomArtifact | RandomTreasureArtifact |
@@ -1674,7 +1740,7 @@ w_named_args!(object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate])
     loc: call!(Eat::location) >>
     template_idx: call!(Eat::long) >>
     _zeroes: tag!([0u8; 5]) >>
-    properties: call!(templates[template_idx as usize].class.props_parser(), version) >>
+    properties: call!(templates[template_idx as usize].class.props_parser(templates[template_idx as usize].subclass), version) >>
     (H3MObject {
         loc, template_idx, properties
     })
@@ -1755,9 +1821,9 @@ w_named!(h3m<H3MFile>, do_parse!(
     rumors: length_count!(Eat::long, tuple!(Eat::string, Eat::string)) >>
     heroes: count!(sod!(header.version, value!(None), option!(Eat::hero_customization)), 156) >>
     land: count!(Eat::tile, header.get_width() * header.get_height()) >>
-    underground: switch!(value!(header.has_underground),
-        false => value!(None) |
-        true => map!(count!(Eat::tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { tiles }))
+    underground: ifeq!(header.has_underground, false,
+        value!(None),
+        map!(count!(Eat::tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { tiles }))
     ) >>
     object_templates: length_count!(Eat::long, Eat::object_template) >>
     objects: length_count!(Eat::long, call!(Eat::object, header.version, &object_templates)) >>
@@ -1793,10 +1859,18 @@ mon_named!(h3m<H3MFile>, mon_do_parse!(
     banned_spells: mon_sod!(header.version, mon_value!(H3MSpellsMask::default()), mon_call!(Put::spells_mask)) >>
     banned_skills: mon_sod!(header.version, mon_value!(0u32), mon_call!(Put::long)) >>
     rumors: mon_length_count!(Put::long, mon_tuple!(Put::string, Put::string)) >>
+    heroes: mon_count!(mon_sod!(header.version, mon_value!(None), mon_option!(Put::hero_customization)), 156) >>
+    land: mon_count!(Put::tile, header.get_width() * header.get_height()) >>
+    underground: mon_ifeq!(header.has_underground, false,
+        mon_value!(None),
+        mon_map!(mon_count!(Put::tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { ref tiles }))
+    ) >>
+    object_templates: mon_length_count!(Put::long, Put::object_template) >>
     (H3MFile {
         ref header, ref players, ref victory, ref loss, ref teams, ref available_heroes,
-        ref banned_artifacts, ref banned_artifacts_ext, ref banned_spells, ref banned_skills, ref rumors, 
-        ..
+        ref banned_artifacts, ref banned_artifacts_ext, ref banned_spells, ref banned_skills, ref rumors, ref heroes,
+        land: H3MMap { tiles: ref land }, ref underground,
+        ref object_templates, ..
     })
 ));
 
@@ -1841,8 +1915,8 @@ fn print_map(doc: &H3MFile) {
                     line.push_str("...");
                 } else {
                     let pat = tile.road_topo.to_ascii();
-                    let base = 3 * if tile.flip_road_x { [2, 1, 0] } else { [0, 1, 2] } [sub];
-                    if tile.flip_road_y {
+                    let base = 3 * if tile.mirror & 32 == 32 { [2, 1, 0] } else { [0, 1, 2] } [sub];
+                    if tile.mirror & 16 == 16 {
                         line.push(pat[base + 2] as char);
                         line.push(pat[base + 1] as char);
                         line.push(pat[base + 0] as char);

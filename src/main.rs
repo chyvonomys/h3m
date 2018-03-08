@@ -28,22 +28,25 @@ impl Eat {
 
 #[cfg(feature = "put")]
 impl Put {
-    fn byte(o: &mut Vec<u8>, v: &u8) -> bool {
-        o.push(*v);
+    fn byte<T: Into<u32> + Copy>(o: &mut Vec<u8>, v: &T) -> bool {
+        let u: u32 = (*v).into();
+        o.push((u & 0xFF) as u8);
         true
     }
 
-    fn short(o: &mut Vec<u8>, v: &u16) -> bool {
-        o.push(((*v >> 0) & 0xFF) as u8);
-        o.push(((*v >> 8) & 0xFF) as u8);
+    fn short<T: Into<u32> + Copy>(o: &mut Vec<u8>, v: &T) -> bool {
+        let u: u32 = (*v).into();
+        o.push(((u >> 0) & 0xFF) as u8);
+        o.push(((u >> 8) & 0xFF) as u8);
         true
     }
 
-    fn long(o: &mut Vec<u8>, v: &u32) -> bool {
-        o.push(((*v >>  0) & 0xFF) as u8);
-        o.push(((*v >>  8) & 0xFF) as u8);
-        o.push(((*v >> 16) & 0xFF) as u8);
-        o.push(((*v >> 24) & 0xFF) as u8);
+    fn long<T: Into<u32> + Copy>(o: &mut Vec<u8>, v: &T) -> bool {
+        let u: u32 = (*v).into();
+        o.push(((u >>  0) & 0xFF) as u8);
+        o.push(((u >>  8) & 0xFF) as u8);
+        o.push(((u >> 16) & 0xFF) as u8);
+        o.push(((u >> 24) & 0xFF) as u8);
         true
     }
 }
@@ -324,6 +327,16 @@ macro_rules! mon_count (
 );
 
 #[cfg(feature = "put")]
+macro_rules! mon_count_fixed (
+    ($o:ident, $v:ident, $t:ty, $submac:ident!( $($args:tt)* ), $n:expr) => (
+        mon_count!($o, $v, $submac!($($args)*), $n)
+    );
+    ($o:ident, $v:ident, $t:ty, $f:expr, $n:expr) => (
+        mon_count!($o, $v, mon_call!($f), $n)
+    );
+);
+
+#[cfg(feature = "put")]
 macro_rules! mon_length_count (
     ($o:ident, $v:ident, $len:ident!( $($largs:tt)* ), $item:ident!( $($iargs:tt)* )) => (
         {
@@ -365,14 +378,14 @@ macro_rules! mon_value (
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 w_named!(flag<bool>, switch!(Eat::byte,
-    0 => value!(false) |
-    1 => value!(true)
+    0u8 => value!(false) |
+    1u8 => value!(true)
 ));
 
 #[cfg(feature = "put")]
 mon_named!(flag<bool>, mon_switch!(Put::byte,
-    0 => mon_value!(false) |
-    1 => mon_value!(true)
+    0u8 => mon_value!(false) |
+    1u8 => mon_value!(true)
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -623,21 +636,21 @@ w_named_args!(special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCondi
             or_default: call!(Eat::flag) >>
             cpu_allowed: call!(Eat::flag) >>
             condition: switch!(variable!(code),
-                0x00 => map!(call!(Eat::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(art)) |
-                0x01 => do_parse!(cr: call!(Eat::creature, version) >> amount: call!(Eat::long) >>
+                0x00u8 => map!(call!(Eat::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(art)) |
+                0x01u8 => do_parse!(cr: call!(Eat::creature, version) >> amount: call!(Eat::long) >>
                     (H3MVictoryCondition::AccumCreatures(cr, amount))) |
-                0x02 => do_parse!(res: call!(Eat::resource) >> amount: call!(Eat::long) >>
+                0x02u8 => do_parse!(res: call!(Eat::resource) >> amount: call!(Eat::long) >>
                     (H3MVictoryCondition::AccumResources(res, amount))) |
-                0x03 => do_parse!(loc: call!(Eat::location) >> hall: call!(Eat::hall_level) >> castle: call!(Eat::castle_level) >>
+                0x03u8 => do_parse!(loc: call!(Eat::location) >> hall: call!(Eat::hall_level) >> castle: call!(Eat::castle_level) >>
                     (H3MVictoryCondition::UpgradeTown(loc, hall, castle))) |
-                0x04 => map!(alt!(tag!([0xFF; 3]) => { |_| None } | call!(Eat::location) => { |x| Some(x) }),
+                0x04u8 => map!(alt!(tag!([0xFF; 3]) => { |_| None } | call!(Eat::location) => { |x| Some(x) }),
                     |loc| H3MVictoryCondition::BuildGrail(loc)) |
-                0x05 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
-                0x06 => map!(Eat::location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
-                0x07 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
-                0x08 => value!(H3MVictoryCondition::FlagAllDwellings) |
-                0x09 => value!(H3MVictoryCondition::FlagAllMines) |
-                0x0A => do_parse!(art: call!(Eat::artifact1) >> loc: call!(Eat::location) >>
+                0x05u8 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatHero(loc)) |
+                0x06u8 => map!(Eat::location, |loc| H3MVictoryCondition::CaptureTown(loc)) |
+                0x07u8 => map!(Eat::location, |loc| H3MVictoryCondition::DefeatMonster(loc)) |
+                0x08u8 => value!(H3MVictoryCondition::FlagAllDwellings) |
+                0x09u8 => value!(H3MVictoryCondition::FlagAllMines) |
+                0x0Au8 => do_parse!(art: call!(Eat::artifact1) >> loc: call!(Eat::location) >>
                     (H3MVictoryCondition::TransportArtifact(art, loc)))
             ) >>
             _code: forget!(code, 0xFF) >>
@@ -657,21 +670,21 @@ mon_named_args!(special_victory(version: H3MVersion)<Option<H3MSpecialVictoryCon
             or_default: mon_call!(Put::flag) >>
             cpu_allowed: mon_call!(Put::flag) >>
             condition: mon_switch!(mon_variable!(code),
-                0x00 => mon_map!(mon_call!(Put::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(ref art)) |
-                0x01 => mon_do_parse!(cr: mon_call!(Put::creature, version) >> amount: mon_call!(Put::long) >>
+                0x00u8 => mon_map!(mon_call!(Put::artifact, version), |art| H3MVictoryCondition::AcquireArtifact(ref art)) |
+                0x01u8 => mon_do_parse!(cr: mon_call!(Put::creature, version) >> amount: mon_call!(Put::long) >>
                     (H3MVictoryCondition::AccumCreatures(ref cr, ref amount))) |
-                0x02 => mon_do_parse!(res: mon_call!(Put::resource) >> amount: mon_call!(Put::long) >>
+                0x02u8 => mon_do_parse!(res: mon_call!(Put::resource) >> amount: mon_call!(Put::long) >>
                     (H3MVictoryCondition::AccumResources(ref res, ref amount))) |
-                0x03 => mon_do_parse!(loc: mon_call!(Put::location) >> hall: mon_call!(Put::hall_level) >> castle: mon_call!(Put::castle_level) >>
+                0x03u8 => mon_do_parse!(loc: mon_call!(Put::location) >> hall: mon_call!(Put::hall_level) >> castle: mon_call!(Put::castle_level) >>
                     (H3MVictoryCondition::UpgradeTown(ref loc, ref hall, ref castle))) |
-                0x04 => mon_map!(mon_alt!(mon_tag!([0xFF; 3]) => { |_| None } | mon_call!(Put::location) => { |x| Some(ref x) }),
+                0x04u8 => mon_map!(mon_alt!(mon_tag!([0xFF; 3]) => { |_| None } | mon_call!(Put::location) => { |x| Some(ref x) }),
                     |loc| H3MVictoryCondition::BuildGrail(ref loc)) |
-                0x05 => mon_map!(Put::location, |loc| H3MVictoryCondition::DefeatHero(ref loc)) |
-                0x06 => mon_map!(Put::location, |loc| H3MVictoryCondition::CaptureTown(ref loc)) |
-                0x07 => mon_map!(Put::location, |loc| H3MVictoryCondition::DefeatMonster(ref loc)) |
-                0x08 => mon_value!(H3MVictoryCondition::FlagAllDwellings) |
-                0x09 => mon_value!(H3MVictoryCondition::FlagAllMines) |
-                0x0A => mon_do_parse!(art: mon_call!(Put::artifact1) >> loc: mon_call!(Put::location) >>
+                0x05u8 => mon_map!(Put::location, |loc| H3MVictoryCondition::DefeatHero(ref loc)) |
+                0x06u8 => mon_map!(Put::location, |loc| H3MVictoryCondition::CaptureTown(ref loc)) |
+                0x07u8 => mon_map!(Put::location, |loc| H3MVictoryCondition::DefeatMonster(ref loc)) |
+                0x08u8 => mon_value!(H3MVictoryCondition::FlagAllDwellings) |
+                0x09u8 => mon_value!(H3MVictoryCondition::FlagAllMines) |
+                0x0Au8 => mon_do_parse!(art: mon_call!(Put::artifact1) >> loc: mon_call!(Put::location) >>
                     (H3MVictoryCondition::TransportArtifact(ref art, ref loc)))
             ) >>
             _code: mon_forget!(code, 0xFF) >>
@@ -693,10 +706,17 @@ enum H3MLossCondition {
 }
 
 w_named!(loss<H3MLossCondition>, switch!(Eat::byte,
-    0xFF => value!(H3MLossCondition::Default) |
-    0x00 => do_parse!(l: call!(Eat::location) >> (H3MLossCondition::LoseTown(l))) |
-    0x01 => do_parse!(l: call!(Eat::location) >> (H3MLossCondition::LoseHero(l))) |
-    0x02 => do_parse!(d: call!(Eat::short) >> (H3MLossCondition::TimeExpires(d)))
+    0xFFu8 => value!(H3MLossCondition::Default) |
+    0x00u8 => map!(Eat::location, |l| H3MLossCondition::LoseTown(l)) |
+    0x01u8 => map!(Eat::location, |l| H3MLossCondition::LoseHero(l)) |
+    0x02u8 => map!(Eat::short, |d| H3MLossCondition::TimeExpires(d))
+));
+
+mon_named!(loss<H3MLossCondition>, mon_switch!(Put::byte,
+    0xFFu8 => mon_value!(H3MLossCondition::Default) |
+    0x00u8 => mon_map!(Put::location, |l| H3MLossCondition::LoseTown(ref l)) |
+    0x01u8 => mon_map!(Put::location, |l| H3MLossCondition::LoseHero(ref l)) |
+    0x02u8 => mon_map!(Put::short, |d| H3MLossCondition::TimeExpires(ref d))
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -869,21 +889,41 @@ w_named!(hero_availability<H3MHeroAvailability>, do_parse!(
     (H3MHeroAvailability { id, face, name, players_mask })
 ));
 
+#[cfg(feature = "put")]
+mon_named!(hero_availability<H3MHeroAvailability>, mon_do_parse!(
+    id: mon_call!(Put::byte) >>
+    face: mon_call!(Put::byte) >>
+    name: mon_call!(Put::string) >>
+    players_mask: mon_call!(Put::byte) >>
+    (H3MHeroAvailability { ref id, ref face, ref name, ref players_mask })
+));
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
 struct H3MAvailableHeroes {
-    mask: [u8; 16],
-    mask_ext: [u8; 4], // AB/SoD
+    mask: [u32; 4],
+    mask_ext: u32, // AB/SoD
     settings: Vec<H3MHeroAvailability>, // SoD
 }
 
 w_named_args!(available_heroes(version: H3MVersion)<H3MAvailableHeroes>, do_parse!(
-    mask: count_fixed!(u8, Eat::byte, 16) >>
-    mask_ext: ifeq!(version, H3MVersion::RoE, value!([0xFF, 0xFF, 1, 0]), count_fixed!(u8, Eat::byte, 4)) >>
+    mask: count_fixed!(u32, Eat::long, 4) >>
+    mask_ext: ifeq!(version, H3MVersion::RoE, value!(0x0001FFFF), call!(Eat::long)) >>
     _zeroes: ifeq!(version, H3MVersion::RoE, value!(()), value!((), tag!([0u8; 4]))) >>
+    _z: forget!(_zeroes, ()) >>
     settings: sod!(version, value!(Vec::default()), length_count!(Eat::byte, Eat::hero_availability)) >>
     (H3MAvailableHeroes { mask, mask_ext, settings })
+));
+
+#[cfg(feature = "put")]
+mon_named_args!(available_heroes(version: H3MVersion)<H3MAvailableHeroes>, mon_do_parse!(
+    mask: mon_count_fixed!(u32, Put::long, 4) >>
+    mask_ext: mon_ifeq!(version, H3MVersion::RoE, mon_value!(0x0001FFFF), mon_call!(Put::long)) >>
+    _zeroes: mon_ifeq!(version, H3MVersion::RoE, mon_value!(()), mon_value!((), [0u8; 4], mon_tag!([0u8; 4]))) >>
+    _z: mon_forget!(_zeroes, ()) >>
+    settings: mon_sod!(version, mon_value!(Vec::default()), mon_length_count!(Put::byte, Put::hero_availability)) >>
+    (H3MAvailableHeroes { ref mask, ref mask_ext, ref settings })
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1648,7 +1688,7 @@ struct H3MFile {
     players: Vec<H3MPlayer>, // TODO: this always has 8 items
     victory: Option<H3MSpecialVictoryCondition>,
     loss: H3MLossCondition,
-    teams: Option<[u8; 8]>,
+    teams: Option<(u8, [u8; 8])>,
     available_heroes: H3MAvailableHeroes,
     banned_artifacts: [u8; 17], // AB/SoD
     banned_artifacts_ext: u8, // SoD
@@ -1668,9 +1708,13 @@ w_named!(h3m<H3MFile>, do_parse!(
     players: count!(call!(Eat::player, header.version), 8) >>
     victory: call!(Eat::special_victory, header.version) >>
     loss: call!(Eat::loss) >>
-    teams: switch!(Eat::byte,
-        0u8 => value!(None) |
-        _ => map!(count_fixed!(u8, Eat::byte, 8), |x| Some(x))
+    teams: alt!(
+        tag!([0u8]) => { |_| None } |
+        do_parse!(
+            nteams: call!(Eat::byte) >>
+            ids: count_fixed!(u8, Eat::byte, 8) >>
+            ((nteams, ids))
+        ) => { |p| Some(p) }
     ) >>
     available_heroes: call!(Eat::available_heroes, header.version) >>
     _zeroes: tag!([0u8; 31]) >>
@@ -1702,33 +1746,19 @@ mon_named!(h3m<H3MFile>, mon_do_parse!(
     header: mon_call!(Put::header) >>
     players: mon_count!(mon_call!(Put::player, header.version), 8) >>
     victory: mon_call!(Put::special_victory, header.version) >>
-    // loss: call!(Eat::loss) >>
-    // teams: switch!(Eat::byte,
-    //     0u8 => value!(None) |
-    //     _ => map!(count_fixed!(u8, Eat::byte, 8), |x| Some(x))
-    // ) >>
-    // available_heroes: call!(Eat::available_heroes, header.version) >>
-    // _zeroes: tag!([0u8; 31]) >>
-    // banned_artifacts: ifeq!(header.version, H3MVersion::RoE, value!([0u8; 17]), count_fixed!(u8, Eat::byte, 17)) >>
-    // banned_artifacts_ext: sod!(header.version, value!(31u8), call!(Eat::byte)) >>
-    // banned_spells: sod!(header.version, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
-    // banned_skills: sod!(header.version, value!(0u32), call!(Eat::long)) >>
-    // rumors: length_count!(Eat::long, tuple!(Eat::string, Eat::string)) >>
-    // heroes: count!(sod!(header.version, value!(None), option!(Eat::hero_customization)), 156) >>
-    // land: count!(Eat::tile, header.get_width() * header.get_height()) >>
-    // underground: switch!(value!(header.has_underground),
-    //     false => value!(None) |
-    //     true => map!(count!(Eat::tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { tiles }))
-    // ) >>
-    // object_templates: length_count!(Eat::long, Eat::object_template) >>
-    // objects: length_count!(Eat::long, call!(Eat::object, header.version, &object_templates)) >>
-    // events: length_count!(Eat::long, call!(Eat::event, header.version)) >>
-    // _trailing_zeroes: count!(tag!([0u8]), 124) >>
+    loss: mon_call!(Put::loss) >>
+    teams: mon_alt!(
+        mon_tag!([0u8]) => { |_| None } |
+        mon_do_parse!(
+            nteams: mon_call!(Put::byte) >>
+            ids: mon_count_fixed!(u8, Put::byte, 8) >>
+            ((ref nteams, ref ids))
+        ) => { |p| Some(ref p) }
+    ) >>
+    available_heroes: mon_call!(Put::available_heroes, header.version) >>
     (H3MFile {
-        ref header, ref players, ref victory, .. /* loss, teams, available_heroes,
-        banned_artifacts, banned_artifacts_ext, banned_spells, banned_skills, rumors, heroes,
-        land: H3MMap { tiles: land }, underground,
-        object_templates, objects, events */
+        ref header, ref players, ref victory, ref loss, ref teams, ref available_heroes,
+        ..
     })
 ));
 

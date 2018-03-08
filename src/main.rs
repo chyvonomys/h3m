@@ -231,54 +231,43 @@ macro_rules! mon_map (
     );
 );
 
-use std::ops::IndexMut;
-
 #[cfg(feature = "put")]
 macro_rules! mon_do_parse (
-    (__impl $stack:ident, $res:expr,  $var:ident : $head:ident!( $($args:tt)* ) >> ) => (
-        let last = $stack.len();
-        $stack.push(Vec::new());
-        {
-            let tempo = $stack.index_mut(last);
-            $res = $res && $head!(tempo, $var, $($args)* );
-        }
-    );
-
+    (__impl $stack:ident, $res:expr, ) => ( $res );
     (__impl $stack:ident, $res:expr,  $ign:ident : mon_forget!( $var:ident, $def:expr ) >>
                                    $(   $x:ident :   $y:ident!( $($z:tt)*             ) >> )* ) => (
-        let ref mut $var = $def;
-        mon_do_parse!(__impl $stack, $res, $( $x : $y!( $($z)* ) >> )* );
+        {
+            let ref mut $var = $def;
+            mon_do_parse!(__impl $stack, $res, $( $x : $y!( $($z)* ) >> )* )
+        }
     );
-    
     (__impl $stack:ident, $res:expr,  $var:ident : $head:ident!( $($args:tt)* ) >>
                                    $(   $x:ident :    $y:ident!( $(   $z:tt)* ) >> )* ) => (
-        let last = $stack.len();
-        $stack.push(Vec::new());
         {
-            let tempo = $stack.index_mut(last);
-            $res = $res && $head!(tempo, $var, $($args)* );
+            let mut tempo = Vec::new();
+            $res = $res && { let out = &mut tempo; $head!(out, $var, $($args)* ) };
+            $stack.push(tempo);
+            mon_do_parse!(__impl $stack, $res, $( $x : $y!( $($z)* ) >> )* )
         }
-        mon_do_parse!(__impl $stack, $res, $( $x : $y!( $($z)* ) >> )* );
     );
-
-    (__rev $stack:ident, $res:expr, ^ $( $rx:ident : $ry:ident!( $($rz:tt)* ) >> )* ) => (
-        mon_do_parse!(__impl $stack, $res, $( $rx : $ry!( $($rz)* ) >> )* )
+    (__rev $stack:ident, ^ $( $rx:ident : $ry:ident!( $($rz:tt)* ) >> )* ) => (
+        {
+            let mut res = true;
+            mon_do_parse!(__impl $stack, res, $( $rx : $ry!( $($rz)* ) >> )* )
+        }
     );
-
-    (__rev $stack:ident, $res:expr, $hx:ident : $hy:ident!( $($hz:tt)* ) >>
-                                 $( $tx:ident : $ty:ident!( $($tz:tt)* ) >> )*
-                               ^ $( $rx:ident : $ry:ident!( $($rz:tt)* ) >> )* ) => (
-        mon_do_parse!(__rev $stack, $res, $( $tx : $ty!( $($tz)* ) >> )*
-                                           ^ $hx : $hy!( $($hz)* ) >>
-                                          $( $rx : $ry!( $($rz)* ) >> )* )
+    (__rev $stack:ident, $hx:ident : $hy:ident!( $($hz:tt)* ) >>
+                      $( $tx:ident : $ty:ident!( $($tz:tt)* ) >> )*
+                    ^ $( $rx:ident : $ry:ident!( $($rz:tt)* ) >> )* ) => (
+        mon_do_parse!(__rev $stack, $( $tx : $ty!( $($tz)* ) >> )*
+                                     ^ $hx : $hy!( $($hz)* ) >>
+                                    $( $rx : $ry!( $($rz)* ) >> )* )
     );
-
     ($o:ident, $v:ident,    $( $x:ident : $y:ident!( $($z:tt)* ) >> )*   ( $pat:pat ) ) => (
-        match $v {
-            &$pat => {
+        match *$v {
+            $pat => {
                 let mut stack = Vec::new();
-                let mut res = true;
-                mon_do_parse!(__rev stack, res, $( $x : $y!( $($z)* ) >> )* ^ );
+                let res = mon_do_parse!(__rev stack, $( $x : $y!( $($z)* ) >> )* ^ );
                 if res {
                     stack.reverse();
                     for x in stack {

@@ -590,6 +590,8 @@ struct H3MResources([u32; 7]);
 
 w_named!(resources<H3MResources>, map!(count_fixed!(u32, Eat::long, 7), |xs| H3MResources(xs)));
 
+mon_named!(resources<H3MResources>, mon_map!(mon_count_fixed!(u32, Put::long, 7), |xs| H3MResources(xs)));
+
 impl std::fmt::Debug for H3MResources {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "<W:{} M:{} O:{} S:{} C:{} G:{} $:{}>",
@@ -1689,6 +1691,7 @@ w_named_args!(obj_event(version: H3MVersion)<H3MObjectProperties>,
 );
 
 w_named_args!(obj_noprops(_v: H3MVersion)<H3MObjectProperties>, value!(H3MObjectProperties::NoProperties));
+mon_named_args!(obj_noprops(_v: H3MVersion)<H3MObjectProperties>, mon_value!(H3MObjectProperties::NoProperties));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1725,6 +1728,11 @@ impl H3MObjectClass {
             _ => Eat::obj_noprops,
         }
     }
+    fn props_writer(&self, _subclass: u32) -> fn (&mut Vec<u8>, &H3MObjectProperties, H3MVersion) -> bool {
+        match *self {
+            _ => Put::obj_noprops,
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1739,10 +1747,22 @@ struct H3MObject {
 w_named_args!(object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
     loc: call!(Eat::location) >>
     template_idx: call!(Eat::long) >>
-    _zeroes: tag!([0u8; 5]) >>
+    _zeroes: value!((), tag!([0u8; 5])) >>
+    _z: forget!(_zeroes, ()) >>
     properties: call!(templates[template_idx as usize].class.props_parser(templates[template_idx as usize].subclass), version) >>
     (H3MObject {
         loc, template_idx, properties
+    })
+));
+
+mon_named_args!(object(version: H3MVersion, templates: &[H3MObjectTemplate])<H3MObject>, mon_do_parse!(
+    loc: mon_call!(Put::location) >>
+    template_idx: mon_call!(Put::long) >>
+    _zeroes: mon_value!((), [0u8; 5], mon_tag!([0u8; 5])) >>
+    _z: mon_forget!(_zeroes, ()) >>
+    properties: mon_call!(templates[*template_idx as usize].class.props_writer(templates[*template_idx as usize].subclass), version) >>
+    (H3MObject {
+        ref loc, ref template_idx, ref properties
     })
 ));
 
@@ -1769,9 +1789,26 @@ w_named_args!(event(version: H3MVersion)<H3MEvent>, do_parse!(
     unknown3: call!(Eat::flag) >>
     first_occurence: call!(Eat::short) >>
     repeat_period: call!(Eat::short) >>
-    _zeroes: tag!([0u8; 16]) >>
+    _zeroes: value!((), tag!([0u8; 16])) >>
+    _z: forget!(_zeroes, ()) >>
     (H3MEvent {
         name, text, resources, unknown1, unknown2, unknown3, first_occurence, repeat_period
+    })
+));
+
+mon_named_args!(event(version: H3MVersion)<H3MEvent>, mon_do_parse!(
+    name: mon_call!(Put::string) >>
+    text: mon_call!(Put::string) >>
+    resources: mon_call!(Put::resources) >>
+    unknown1: mon_call!(Put::byte) >>
+    unknown2: mon_sod!(version, mon_value!(true), mon_call!(Put::flag)) >>
+    unknown3: mon_call!(Put::flag) >>
+    first_occurence: mon_call!(Put::short) >>
+    repeat_period: mon_call!(Put::short) >>
+    _zeroes: mon_value!((), [0u8; 16], mon_tag!([0u8; 16])) >>
+    _z: mon_forget!(_zeroes, ()) >>
+    (H3MEvent {
+        ref name, ref text, ref resources, ref unknown1, ref unknown2, ref unknown3, ref first_occurence, ref repeat_period
     })
 ));
 
@@ -1828,7 +1865,8 @@ w_named!(h3m<H3MFile>, do_parse!(
     object_templates: length_count!(Eat::long, Eat::object_template) >>
     objects: length_count!(Eat::long, call!(Eat::object, header.version, &object_templates)) >>
     events: length_count!(Eat::long, call!(Eat::event, header.version)) >>
-    _trailing_zeroes: count!(tag!([0u8]), 124) >>
+    _trailing_zeroes: value!((), count!(tag!([0u8]), 124)) >>
+    _tz: forget!(_trailing_zeroes, ()) >>
     (H3MFile {
         header, players, victory, loss, teams, available_heroes,
         banned_artifacts, banned_artifacts_ext, banned_spells, banned_skills, rumors, heroes,
@@ -1866,11 +1904,15 @@ mon_named!(h3m<H3MFile>, mon_do_parse!(
         mon_map!(mon_count!(Put::tile, header.get_width() * header.get_height()), |tiles| Some(H3MMap { ref tiles }))
     ) >>
     object_templates: mon_length_count!(Put::long, Put::object_template) >>
+    objects: mon_length_count!(Put::long, mon_call!(Put::object, header.version, &object_templates)) >>
+    events: mon_length_count!(Put::long, mon_call!(Put::event, header.version)) >>
+    _trailing_zeroes: mon_value!((), [0u8; 124], mon_count!(mon_tag!([0u8]), 124)) >>
+    _tz: mon_forget!(_trailing_zeroes, ()) >> 
     (H3MFile {
         ref header, ref players, ref victory, ref loss, ref teams, ref available_heroes,
         ref banned_artifacts, ref banned_artifacts_ext, ref banned_spells, ref banned_skills, ref rumors, ref heroes,
         land: H3MMap { tiles: ref land }, ref underground,
-        ref object_templates, ..
+        ref object_templates, ref objects, ref events
     })
 ));
 

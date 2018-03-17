@@ -193,10 +193,10 @@ macro_rules! mon_switch (
 
 #[cfg(feature = "put")]
 macro_rules! mon_alt (
-    ($o:ident, $v:ident, mon_tag!($tag:expr) => { |_| None } | $case:ident!( $($args:tt)* ) => { |$x:ident| $pat:pat }) => (
+    ($o:ident, $v:ident, mon_tag!($tag:expr) => { |_| $pat0:pat } | $case:ident!( $($args:tt)* ) => { |$x:ident| $pat1:pat }) => (
         match *$v {
-            None => { let _t = &$tag; mon_tag!($o, _t, $tag) },
-            $pat => { let val = $x; $case!($o, val, $($args)*) },
+            $pat0 => { let _t = &$tag; mon_tag!($o, _t, $tag) },
+            $pat1 => { let val = $x; $case!($o, val, $($args)*) },
         }
     );
 );
@@ -397,6 +397,9 @@ macro_rules! mon_tuple (
     );
     (__impl $o:ident, $v:ident, [ $( $f:ident: $p:ident!( $($args:tt)* ) )* ] $h:ident!( $($hargs:tt)* ) $(, $t:ident!( $($targs:tt)* ) )* ) => (
         mon_tuple!(__impl $o, $v, [ $( $f : $p!( $($args)* ) )* fff : $h!( $($hargs)* ) ] $($t!( $($targs)* )),* )
+    );
+    ($o:ident, $v:ident, $( $mac:ident!( $($args:tt)* ) ),* ) => (
+        mon_tuple!(__impl $o, $v, [] $( $mac!( $($args)* ) ),* )
     );
     ($o:ident, $v:ident, $($t:expr),*) => (
         mon_tuple!(__impl $o, $v, [] $( mon_call!($t) ),* )
@@ -1225,6 +1228,13 @@ w_named!(buildings<H3MBuildings>,
     )
 );
 
+mon_named!(buildings<H3MBuildings>,
+    mon_switch!(Put::flag,
+        true => mon_map!(mon_count_fixed!(u8, Put::byte, 12), |m| H3MBuildings::Custom(ref m)) |
+        false => mon_map!(Put::flag, |f| H3MBuildings::Fort(ref f))
+    )
+);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
@@ -1241,6 +1251,14 @@ w_named_args!(town_event(version: H3MVersion)<H3MTownEvent>, do_parse!(
     creatures: count_fixed!(u16, Eat::short, 7) >>
     unknown: call!(Eat::long) >>
     (H3MTownEvent { event, buildings, creatures, unknown })
+));
+
+mon_named_args!(town_event(version: H3MVersion)<H3MTownEvent>, mon_do_parse!(
+    event: mon_call!(Put::event, version) >>
+    buildings: mon_count_fixed!(u8, Put::byte, 6) >>
+    creatures: mon_count_fixed!(u16, Put::short, 7) >>
+    unknown: mon_call!(Put::long) >>
+    (H3MTownEvent { ref event, ref buildings, ref creatures, ref unknown })
 ));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1280,6 +1298,12 @@ w_named_args!(msg_guards(version: H3MVersion)<H3MMessageAndGuards>, do_parse!(
     _zeroes: tag!([0u8; 4]) >>
     (H3MMessageAndGuards { message, guards })
 ));
+mon_named_args!(msg_guards(version: H3MVersion)<H3MMessageAndGuards>, mon_do_parse!(
+    message: mon_call!(Put::string) >>
+    guards: mon_option!(mon_call!(Put::creatures, version)) >>
+    _zeroes: mon_tag!([0u8; 4]) >>
+    (H3MMessageAndGuards { ref message, ref guards })
+));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1287,7 +1311,10 @@ w_named_args!(msg_guards(version: H3MVersion)<H3MMessageAndGuards>, do_parse!(
 struct H3MCreatures([(H3MCreature, u16); 7]);
 
 w_named_args!(creatures(version: H3MVersion)<H3MCreatures>,
-    map!(count_fixed!((H3MCreature, u16), tuple!(call!(Eat::creature, version), Eat::short), 7), |cs| H3MCreatures(cs))
+    map!(count_fixed!((H3MCreature, u16), tuple!(call!(Eat::creature, version), call!(Eat::short)), 7), |cs| H3MCreatures(cs))
+);
+mon_named_args!(creatures(version: H3MVersion)<H3MCreatures>,
+    mon_map!(mon_count_fixed!((H3MCreature, u16), mon_tuple!(mon_call!(Put::creature, version), mon_call!(Put::short)), 7), |cs| H3MCreatures(cs))
 );
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1422,11 +1449,31 @@ w_named_args!(msg_guard_reward(version: H3MVersion)<H3MMsgGuardReward>,
         skills: length_count!(Eat::byte, tuple!(Eat::skill, Eat::skill_level)) >>
         artifacts: length_count!(Eat::byte, call!(Eat::artifact, version)) >>
         spells: length_count!(Eat::byte, Eat::spell) >>
-        creatures: length_count!(Eat::byte, tuple!(call!(Eat::creature, version), Eat::short)) >>
+        creatures: length_count!(Eat::byte, tuple!(call!(Eat::creature, version), call!(Eat::short))) >>
         _zeroes: tag!([0u8; 8]) >>
         (H3MMsgGuardReward {
             guard, exp, spell_points, morale, luck,
             resources, stats, skills, artifacts, spells, creatures,
+        })
+    )
+);
+mon_named_args!(msg_guard_reward(version: H3MVersion)<H3MMsgGuardReward>,
+    mon_do_parse!(
+        guard: mon_option!(mon_call!(Put::msg_guards, version)) >>
+        exp: mon_call!(Put::long) >>
+        spell_points: mon_call!(Put::long) >>
+        morale: mon_call!(Put::modifier) >>
+        luck: mon_call!(Put::modifier) >>
+        resources: mon_call!(Put::resources) >>
+        stats: mon_tuple!(Put::byte, Put::byte, Put::byte, Put::byte) >>
+        skills: mon_length_count!(Put::byte, mon_tuple!(Put::skill, Put::skill_level)) >>
+        artifacts: mon_length_count!(Put::byte, mon_call!(Put::artifact, version)) >>
+        spells: mon_length_count!(Put::byte, Put::spell) >>
+        creatures: mon_length_count!(Put::byte, mon_tuple!(mon_call!(Put::creature, version), mon_call!(Put::short))) >>
+        _zeroes: mon_tag!([0u8; 8]) >>
+        (H3MMsgGuardReward {
+            ref guard, ref exp, ref spell_points, ref morale, ref luck,
+            ref resources, ref stats, ref skills, ref artifacts, ref spells, ref creatures,
         })
     )
 );
@@ -1508,10 +1555,11 @@ w_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     patrol_radius: call!(Eat::byte) >>
     bio: ifeq!(version, H3MVersion::RoE, value!(None), option!(Eat::string)) >>
     gender: ifeq!(version, H3MVersion::RoE, value!(H3MHeroGender::Default), call!(Eat::hero_gender)) >>
-    spells: switch!(value!(version),
-                    H3MVersion::RoE => value!(None) |
-                    H3MVersion::AB => value!(None, Eat::byte) |
-                    H3MVersion::SoD => option!(Eat::spells_mask)
+    spells: ifeq!(version, H3MVersion::RoE, value!(None),
+        ifeq!(version, H3MVersion::AB,
+            value!(None, call!(Eat::byte)), // TODO: single spell id
+            option!(Eat::spells_mask)
+        )
     ) >>
     stats: sod!(version, value!(None), option!(tuple!(Eat::byte, Eat::byte, Eat::byte, Eat::byte))) >>
     _zeros: tag!([0u8; 16]) >>
@@ -1521,19 +1569,63 @@ w_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     })
 ));
 
+mon_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    id: mon_ifeq!(version, H3MVersion::RoE, mon_value!(0xFFFFFFFF), mon_call!(Put::long)) >>
+    owner: mon_call!(Put::color) >>
+    hero_type: mon_call!(Put::byte) >>
+    name: mon_option!(Put::string) >>
+    exp: mon_sod!(version, mon_map!(Put::long, |x| Some(ref x)), mon_option!(Put::long)) >>
+    face: mon_option!(Put::byte) >>
+    skills: mon_option!(mon_length_count!(Put::long, mon_tuple!(Put::skill, Put::skill_level))) >>
+    garrison: mon_option!(mon_call!(Put::creatures, version)) >>
+    group_formation: mon_call!(Put::flag) >>
+    equipment: mon_option!(mon_call!(Put::hero_equipment, version)) >>
+    patrol_radius: mon_call!(Put::byte) >>
+    bio: mon_ifeq!(version, H3MVersion::RoE, mon_value!(None), mon_option!(Put::string)) >>
+    gender: mon_ifeq!(version, H3MVersion::RoE, mon_value!(H3MHeroGender::Default), mon_call!(Put::hero_gender)) >>
+    spells: mon_ifeq!(version, H3MVersion::RoE, mon_value!(None),
+        mon_ifeq!(version, H3MVersion::AB,
+            mon_value!(None, 255u8, mon_call!(Put::byte)), // TODO: single spell id
+            mon_option!(Put::spells_mask)
+        )
+    ) >>
+    stats: mon_sod!(version, mon_value!(None), mon_option!(mon_tuple!(Put::byte, Put::byte, Put::byte, Put::byte))) >>
+    _zeros: mon_tag!([0u8; 16]) >>
+    (H3MObjectProperties::Hero {
+        ref id, ref owner, ref hero_type, ref name, ref exp, ref face, ref skills, ref garrison, ref group_formation,
+        ref equipment, ref patrol_radius, ref bio, ref gender, ref spells, ref stats,
+    })
+));
+
 w_named_args!(obj_monster(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     id: ifeq!(version, H3MVersion::RoE, value!(0xFFFFFFFF), call!(Eat::long)) >>
-    quantity: switch!(peek!(Eat::short),
-        0 => value!(H3MQuantity::Random, Eat::short) |
-        _ => map!(Eat::short, |q| H3MQuantity::Custom(q))
-    )>>
+    quantity: alt!(
+        tag!([0u8; 2]) => { |_| H3MQuantity::Random } |
+        call!(Eat::short) => { |q| H3MQuantity::Custom(q) }
+    ) >>
     disposition: call!(Eat::disposition) >>
-    treasure: option!(tuple!(Eat::string, Eat::resources, call!(Eat::artifact, version))) >>
+    treasure: option!(tuple!(call!(Eat::string), call!(Eat::resources), call!(Eat::artifact, version))) >>
     never_flees: call!(Eat::flag) >>
     no_grow: call!(Eat::flag) >>
     _zeroes: tag!([0u8; 2]) >>
     (H3MObjectProperties::Monster {
         id, quantity, disposition, treasure, never_flees, no_grow,
+    })
+));
+
+mon_named_args!(obj_monster(version: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    id: mon_ifeq!(version, H3MVersion::RoE, mon_value!(0xFFFFFFFF), mon_call!(Put::long)) >>
+    quantity: mon_alt!(
+        mon_tag!([0u8; 2]) => { |_| H3MQuantity::Random } |
+        mon_call!(Put::short) => { |q| H3MQuantity::Custom(ref q) }
+    ) >>
+    disposition: mon_call!(Put::disposition) >>
+    treasure: mon_option!(mon_tuple!(mon_call!(Put::string), mon_call!(Put::resources), mon_call!(Put::artifact, version))) >>
+    never_flees: mon_call!(Put::flag) >>
+    no_grow: mon_call!(Put::flag) >>
+    _zeroes: mon_tag!([0u8; 2]) >>
+    (H3MObjectProperties::Monster {
+        ref id, ref quantity, ref disposition, ref treasure, ref never_flees, ref no_grow,
     })
 ));
 
@@ -1555,15 +1647,38 @@ w_named_args!(obj_town(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     })
 ));
 
+mon_named_args!(obj_town(version: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    id: mon_ifeq!(version, H3MVersion::RoE, mon_value!(0xFFFFFFFF), mon_call!(Put::long)) >>
+    owner: mon_call!(Put::color) >>
+    name: mon_option!(Put::string) >>
+    garrison: mon_option!(mon_call!(Put::creatures, version)) >>
+    group_formation: mon_call!(Put::flag) >>
+    buildings: mon_call!(Put::buildings) >>
+    forced_spells: mon_ifeq!(version, H3MVersion::RoE, mon_value!(H3MSpellsMask::default()), mon_call!(Put::spells_mask)) >>
+    allowed_spells: mon_call!(Put::spells_mask) >>
+    events: mon_length_count!(Put::long, mon_call!(Put::town_event, version)) >>
+    alignment: mon_sod!(version, mon_value!(0xFF), mon_call!(Put::byte)) >>
+    _zeroes: mon_tag!([0u8; 3]) >>
+    (H3MObjectProperties::Town {
+        ref id, ref owner, ref name, ref garrison, ref group_formation, ref buildings,
+        ref forced_spells, ref allowed_spells, ref events, ref alignment
+    })
+));
+
 w_named_args!(obj_placeholder(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: call!(Eat::color) >>
     id: call!(Eat::byte) >>
-    power_rating: switch!(value!(id == 0xFF),
-                          true => map!(Eat::byte, |x| Some(x)) |
-                          false => value!(None)
-    ) >>
+    power_rating: ifeq!(id, 0xFF, map!(Eat::byte, |x| Some(x)), value!(None)) >>
     (H3MObjectProperties::HeroPlaceholder {
         owner, id, power_rating
+    })
+));
+mon_named_args!(obj_placeholder(_v: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    owner: mon_call!(Put::color) >>
+    id: mon_call!(Put::byte) >>
+    power_rating: mon_ifeq!(id, &0xFF, mon_map!(Put::byte, |x| Some(ref x)), mon_value!(None)) >>
+    (H3MObjectProperties::HeroPlaceholder {
+        ref owner, ref id, ref power_rating
     })
 ));
 
@@ -1571,6 +1686,11 @@ w_named_args!(obj_owned(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: call!(Eat::color) >>
     _zeroes: tag!([0u8; 3]) >>
     (H3MObjectProperties::OwnedObject { owner })
+));
+mon_named_args!(obj_owned(_v: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    owner: mon_call!(Put::color) >>
+    _zeroes: mon_tag!([0u8; 3]) >>
+    (H3MObjectProperties::OwnedObject { ref owner })
 ));
 
 w_named_args!(obj_dwelling(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
@@ -1601,9 +1721,18 @@ w_named_args!(obj_resource(version: H3MVersion)<H3MObjectProperties>, do_parse!(
     _zeroes: tag!([0u8; 4]) >>
     (H3MObjectProperties::Resource { guard, amount })
 ));
+mon_named_args!(obj_resource(version: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    guard: mon_option!(mon_call!(Put::msg_guards, version)) >>
+    amount: mon_call!(Put::long) >>
+    _zeroes: mon_tag!([0u8; 4]) >>
+    (H3MObjectProperties::Resource { ref guard, ref amount })
+));
 
 w_named_args!(obj_artifact(version: H3MVersion)<H3MObjectProperties>,
     map!(option!(call!(Eat::msg_guards, version)), |guard| H3MObjectProperties::Artifact { guard })
+);
+mon_named_args!(obj_artifact(version: H3MVersion)<H3MObjectProperties>,
+    mon_map!(mon_option!(mon_call!(Put::msg_guards, version)), |guard| H3MObjectProperties::Artifact { ref guard })
 );
 
 w_named_args!(obj_scroll(version: H3MVersion)<H3MObjectProperties>,
@@ -1627,9 +1756,15 @@ w_named_args!(obj_shrine(_v: H3MVersion)<H3MObjectProperties>,
 w_named_args!(obj_grail(_v: H3MVersion)<H3MObjectProperties>,
     map!(Eat::long, |radius| H3MObjectProperties::Grail { radius })
 );
+mon_named_args!(obj_grail(_v: H3MVersion)<H3MObjectProperties>,
+    mon_map!(Put::long, |radius| H3MObjectProperties::Grail { ref radius })
+);
 
 w_named_args!(obj_message(_v: H3MVersion)<H3MObjectProperties>,
     do_parse!(text: call!(Eat::string) >> _zeroes: tag!([0u8; 4]) >> (H3MObjectProperties::Message { text }))
+);
+mon_named_args!(obj_message(_v: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(text: mon_call!(Put::string) >> _zeroes: mon_tag!([0u8; 4]) >> (H3MObjectProperties::Message { ref text }))
 );
 
 w_named_args!(obj_scholar(_v: H3MVersion)<H3MObjectProperties>,
@@ -1644,6 +1779,9 @@ w_named_args!(obj_scholar(_v: H3MVersion)<H3MObjectProperties>,
 w_named_args!(obj_abandoned(_v: H3MVersion)<H3MObjectProperties>,
     do_parse!(resources: call!(Eat::byte) >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::AbandonedMine { resources }))
 );
+mon_named_args!(obj_abandoned(_v: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(resources: mon_call!(Put::byte) >> _zeroes: mon_tag!([0u8; 3]) >> (H3MObjectProperties::AbandonedMine { ref resources }))
+);
 
 w_named_args!(obj_garrison(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
@@ -1653,6 +1791,16 @@ w_named_args!(obj_garrison(version: H3MVersion)<H3MObjectProperties>,
         removable: ifeq!(version, H3MVersion::RoE, value!(1u8), call!(Eat::byte)) >> // TODO: meaning, bool?
         _zeroes2: tag!([0u8; 8]) >>
         (H3MObjectProperties::Garrison { owner, creatures, removable })
+    )
+);
+mon_named_args!(obj_garrison(version: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(
+        owner: mon_call!(Put::color) >>
+        _zeroes1: mon_tag!([0u8; 3]) >>
+        creatures: mon_call!(Put::creatures, version) >>
+        removable: mon_ifeq!(version, H3MVersion::RoE, mon_value!(1u8), mon_call!(Put::byte)) >> // TODO: meaning, bool?
+        _zeroes2: mon_tag!([0u8; 8]) >>
+        (H3MObjectProperties::Garrison { ref owner, ref creatures, ref removable })
     )
 );
 
@@ -1676,6 +1824,10 @@ w_named_args!(obj_pandora(version: H3MVersion)<H3MObjectProperties>, map!(
     call!(Eat::msg_guard_reward, version),
     |contents| H3MObjectProperties::Pandora { contents }
 ));
+mon_named_args!(obj_pandora(version: H3MVersion)<H3MObjectProperties>, mon_map!(
+    mon_call!(Put::msg_guard_reward, version),
+    |contents| H3MObjectProperties::Pandora { ref contents }
+));
 
 w_named_args!(obj_event(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
@@ -1686,6 +1838,18 @@ w_named_args!(obj_event(version: H3MVersion)<H3MObjectProperties>,
         _zeroes: tag!([0u8; 4]) >>
         (H3MObjectProperties::Event {
             contents, players_mask, ai_allowed, one_time
+        })
+    )
+);
+mon_named_args!(obj_event(version: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(
+        contents: mon_call!(Put::msg_guard_reward, version) >>
+        players_mask: mon_call!(Put::byte) >>
+        ai_allowed: mon_call!(Put::flag) >>
+        one_time: mon_call!(Put::flag) >>
+        _zeroes: mon_tag!([0u8; 4]) >>
+        (H3MObjectProperties::Event {
+            ref contents, ref players_mask, ref ai_allowed, ref one_time
         })
     )
 );
@@ -1728,8 +1892,35 @@ impl H3MObjectClass {
             _ => Eat::obj_noprops,
         }
     }
-    fn props_writer(&self, _subclass: u32) -> fn (&mut Vec<u8>, &H3MObjectProperties, H3MVersion) -> bool {
+    fn props_writer(&self, subclass: u32) -> fn (&mut Vec<u8>, &H3MObjectProperties, H3MVersion) -> bool {
+        use H3MObjectClass::*;
         match *self {
+            Hero | Prison | RandomHero => Put::obj_hero,
+            RandomTown | Town => Put::obj_town,
+            Monster | RandomMonster | RandomMonster1 | RandomMonster2 | RandomMonster3 |
+            RandomMonster4 | RandomMonster5 | RandomMonster6 | RandomMonster7 => Put::obj_monster,
+            Mine if subclass == 7 => Put::obj_abandoned,
+            CreatureGenerator1 | CreatureGenerator2 | CreatureGenerator3 | CreatureGenerator4 |
+            Lighthouse | Mine | Shipyard => Put::obj_owned,
+            Artifact | RandomArtifact | RandomTreasureArtifact |
+            RandomMinorArtifact | RandomMajorArtifact | RandomRelicArtifact => Put::obj_artifact,
+            PandorasBox => Put::obj_pandora,
+            Event => Put::obj_event,
+            Garrison | Garrison2 => Put::obj_garrison,
+            Grail => Put::obj_grail,
+            OceanBottle | Sign => Put::obj_message,
+            RandomResource | Resource => Put::obj_resource,
+            // Scholar => Put::obj_scholar,
+            // SeerHut => Put::obj_seer,
+            // ShrineOfMagicIncantation | ShrineOfMagicGesture | ShrineOfMagicThought => Put::obj_shrine,
+            // SpellScroll => Put::obj_scroll,
+            // WitchHut => Put::obj_witch,
+            HeroPlaceholder => Put::obj_placeholder,
+            // QuestGuard => Put::obj_quest_guard,
+            // RandomDwelling => Put::obj_dwelling,
+            // RandomDwellingLevel => Put::obj_dwelling_level,
+            // RandomDwellingFaction => Put::obj_dwelling_faction,
+            AbandonedMine => Put::obj_abandoned,
             _ => Put::obj_noprops,
         }
     }
@@ -1747,8 +1938,7 @@ struct H3MObject {
 w_named_args!(object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate])<H3MObject>, do_parse!(
     loc: call!(Eat::location) >>
     template_idx: call!(Eat::long) >>
-    _zeroes: value!((), tag!([0u8; 5])) >>
-    _z: forget!(_zeroes, ()) >>
+    _zeroes: tag!([0u8; 5]) >>
     properties: call!(templates[template_idx as usize].class.props_parser(templates[template_idx as usize].subclass), version) >>
     (H3MObject {
         loc, template_idx, properties
@@ -1758,8 +1948,7 @@ w_named_args!(object<'a>(version: H3MVersion, templates: &'a[H3MObjectTemplate])
 mon_named_args!(object(version: H3MVersion, templates: &[H3MObjectTemplate])<H3MObject>, mon_do_parse!(
     loc: mon_call!(Put::location) >>
     template_idx: mon_call!(Put::long) >>
-    _zeroes: mon_value!((), [0u8; 5], mon_tag!([0u8; 5])) >>
-    _z: mon_forget!(_zeroes, ()) >>
+    _zeroes: mon_tag!([0u8; 5]) >>
     properties: mon_call!(templates[*template_idx as usize].class.props_writer(templates[*template_idx as usize].subclass), version) >>
     (H3MObject {
         ref loc, ref template_idx, ref properties
@@ -1789,8 +1978,7 @@ w_named_args!(event(version: H3MVersion)<H3MEvent>, do_parse!(
     unknown3: call!(Eat::flag) >>
     first_occurence: call!(Eat::short) >>
     repeat_period: call!(Eat::short) >>
-    _zeroes: value!((), tag!([0u8; 16])) >>
-    _z: forget!(_zeroes, ()) >>
+    _zeroes: tag!([0u8; 16]) >>
     (H3MEvent {
         name, text, resources, unknown1, unknown2, unknown3, first_occurence, repeat_period
     })
@@ -1805,8 +1993,7 @@ mon_named_args!(event(version: H3MVersion)<H3MEvent>, mon_do_parse!(
     unknown3: mon_call!(Put::flag) >>
     first_occurence: mon_call!(Put::short) >>
     repeat_period: mon_call!(Put::short) >>
-    _zeroes: mon_value!((), [0u8; 16], mon_tag!([0u8; 16])) >>
-    _z: mon_forget!(_zeroes, ()) >>
+    _zeroes: mon_tag!([0u8; 16]) >>
     (H3MEvent {
         ref name, ref text, ref resources, ref unknown1, ref unknown2, ref unknown3, ref first_occurence, ref repeat_period
     })
@@ -1849,8 +2036,7 @@ w_named!(h3m<H3MFile>, do_parse!(
         ) => { |p| Some(p) }
     ) >>
     available_heroes: call!(Eat::available_heroes, header.version) >>
-    _zeroes: value!((), tag!([0u8; 31])) >>
-    _z: forget!(_zeroes, ()) >>
+    _zeroes: tag!([0u8; 31]) >>
     banned_artifacts: ifeq!(header.version, H3MVersion::RoE, value!([0u8; 17]), count_fixed!(u8, Eat::byte, 17)) >>
     banned_artifacts_ext: sod!(header.version, value!(31u8), call!(Eat::byte)) >>
     banned_spells: sod!(header.version, value!(H3MSpellsMask::default()), call!(Eat::spells_mask)) >>
@@ -1890,8 +2076,7 @@ mon_named!(h3m<H3MFile>, mon_do_parse!(
         ) => { |p| Some(ref p) }
     ) >>
     available_heroes: mon_call!(Put::available_heroes, header.version) >>
-    _zeroes: mon_value!((), [0u8; 31], mon_tag!([0u8; 31])) >>
-    _z: mon_forget!(_zeroes, ()) >>
+    _zeroes: mon_tag!([0u8; 31]) >>
     banned_artifacts: mon_ifeq!(header.version, H3MVersion::RoE, mon_value!([0u8; 17]), mon_count_fixed!(u8, Put::byte, 17)) >>
     banned_artifacts_ext: mon_sod!(header.version, mon_value!(31u8), mon_call!(Put::byte)) >>
     banned_spells: mon_sod!(header.version, mon_value!(H3MSpellsMask::default()), mon_call!(Put::spells_mask)) >>

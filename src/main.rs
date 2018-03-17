@@ -1283,6 +1283,14 @@ w_named!(dwelling_faction<H3MDwellingFaction>,
         _ => map!(Eat::long, |t| H3MDwellingFaction::SameAsTown(t))
     )
 );
+impl Put {
+    fn dwelling_faction(o: &mut Vec<u8>, v: &H3MDwellingFaction) -> bool {
+        match *v {
+            H3MDwellingFaction::SameAsTown(ref id) => Put::long(o, id),
+            H3MDwellingFaction::Mask(ref m) => Put::long(o, &0u32) && Put::short(o, m),
+        }
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1336,17 +1344,32 @@ enum H3MReward {
 
 w_named_args!(reward(version: H3MVersion)<H3MReward>,
     switch!(Eat::byte,
-        0 => value!(H3MReward::Nothing) |
-        1 => map!(Eat::long, |x| H3MReward::Exp(x)) |
-        2 => map!(Eat::long, |x| H3MReward::SpellPoints(x)) |
-        3 => map!(Eat::modifier, |m| H3MReward::Morale(m)) |
-        4 => map!(Eat::modifier, |m| H3MReward::Luck(m)) |
-        5 => do_parse!(r: call!(Eat::resource) >> n: call!(Eat::long) >> (H3MReward::Resource(r, n))) |
-        6 => do_parse!(s: call!(Eat::stat) >> n: call!(Eat::byte) >> (H3MReward::Stat(s, n))) |
-        7 => do_parse!(s: call!(Eat::skill) >> l: call!(Eat::skill_level) >> (H3MReward::Skill(s, l))) |
-        8 => map!(call!(Eat::artifact, version), |a| H3MReward::Artifact(a)) |
-        9 => map!(Eat::spell, |s| H3MReward::Spell(s)) |
-        10 => do_parse!(c: call!(Eat::creature, version) >> n: call!(Eat::short) >> (H3MReward::Creatures(c, n)))
+        0u8 => value!(H3MReward::Nothing) |
+        1u8 => map!(Eat::long, |x| H3MReward::Exp(x)) |
+        2u8 => map!(Eat::long, |x| H3MReward::SpellPoints(x)) |
+        3u8 => map!(Eat::modifier, |m| H3MReward::Morale(m)) |
+        4u8 => map!(Eat::modifier, |m| H3MReward::Luck(m)) |
+        5u8 => do_parse!(r: call!(Eat::resource) >> n: call!(Eat::long) >> (H3MReward::Resource(r, n))) |
+        6u8 => do_parse!(s: call!(Eat::stat) >> n: call!(Eat::byte) >> (H3MReward::Stat(s, n))) |
+        7u8 => do_parse!(s: call!(Eat::skill) >> l: call!(Eat::skill_level) >> (H3MReward::Skill(s, l))) |
+        8u8 => map!(call!(Eat::artifact, version), |a| H3MReward::Artifact(a)) |
+        9u8 => map!(Eat::spell, |s| H3MReward::Spell(s)) |
+        10u8 => do_parse!(c: call!(Eat::creature, version) >> n: call!(Eat::short) >> (H3MReward::Creatures(c, n)))
+    )
+);
+mon_named_args!(reward(version: H3MVersion)<H3MReward>,
+    mon_switch!(Put::byte,
+        0u8 => mon_value!(H3MReward::Nothing) |
+        1u8 => mon_map!(Put::long, |x| H3MReward::Exp(ref x)) |
+        2u8 => mon_map!(Put::long, |x| H3MReward::SpellPoints(ref x)) |
+        3u8 => mon_map!(Put::modifier, |m| H3MReward::Morale(ref m)) |
+        4u8 => mon_map!(Put::modifier, |m| H3MReward::Luck(ref m)) |
+        5u8 => mon_do_parse!(r: mon_call!(Put::resource) >> n: mon_call!(Put::long) >> (H3MReward::Resource(ref r, ref n))) |
+        6u8 => mon_do_parse!(s: mon_call!(Put::stat) >> n: mon_call!(Put::byte) >> (H3MReward::Stat(ref s, ref n))) |
+        7u8 => mon_do_parse!(s: mon_call!(Put::skill) >> l: mon_call!(Put::skill_level) >> (H3MReward::Skill(ref s, ref l))) |
+        8u8 => mon_map!(mon_call!(Put::artifact, version), |a| H3MReward::Artifact(ref a)) |
+        9u8 => mon_map!(Put::spell, |s| H3MReward::Spell(ref s)) |
+        10u8 => mon_do_parse!(c: mon_call!(Put::creature, version) >> n: mon_call!(Put::short) >> (H3MReward::Creatures(ref c, ref n)))
     )
 );
 
@@ -1369,16 +1392,30 @@ enum H3MQuestObjective {
 
 w_named!(quest_objective<H3MQuestObjective>,
     switch!(Eat::byte,
-        0 => value!(H3MQuestObjective::Nothing) |
-        1 => map!(Eat::long, |x| H3MQuestObjective::Level(x)) |
-        2 => map!(tuple!(Eat::byte, Eat::byte, Eat::byte, Eat::byte), |x| H3MQuestObjective::Stats(x)) |
-        3 => map!(Eat::long, |x| H3MQuestObjective::DefeatHero(x)) |
-        4 => map!(Eat::long, |x| H3MQuestObjective::DefeatMonster(x)) |
-        5 => map!(length_count!(Eat::byte, Eat::artifact2), |x| H3MQuestObjective::Artifacts(x)) |
-        6 => map!(length_count!(Eat::byte, tuple!(Eat::creature2, Eat::short)), |x| H3MQuestObjective::Creatures(x)) |
-        7 => map!(Eat::resources, |x| H3MQuestObjective::Resources(x)) |
-        8 => map!(Eat::byte, |x| H3MQuestObjective::Hero(x)) |
-        9 => map!(Eat::color, |x| H3MQuestObjective::Color(x))
+        0u8 => value!(H3MQuestObjective::Nothing) |
+        1u8 => map!(Eat::long, |x| H3MQuestObjective::Level(x)) |
+        2u8 => map!(tuple!(Eat::byte, Eat::byte, Eat::byte, Eat::byte), |x| H3MQuestObjective::Stats(x)) |
+        3u8 => map!(Eat::long, |x| H3MQuestObjective::DefeatHero(x)) |
+        4u8 => map!(Eat::long, |x| H3MQuestObjective::DefeatMonster(x)) |
+        5u8 => map!(length_count!(Eat::byte, Eat::artifact2), |x| H3MQuestObjective::Artifacts(x)) |
+        6u8 => map!(length_count!(Eat::byte, tuple!(Eat::creature2, Eat::short)), |x| H3MQuestObjective::Creatures(x)) |
+        7u8 => map!(Eat::resources, |x| H3MQuestObjective::Resources(x)) |
+        8u8 => map!(Eat::byte, |x| H3MQuestObjective::Hero(x)) |
+        9u8 => map!(Eat::color, |x| H3MQuestObjective::Color(x))
+    )
+);
+mon_named!(quest_objective<H3MQuestObjective>,
+    mon_switch!(Put::byte,
+        0u8 => mon_value!(H3MQuestObjective::Nothing) |
+        1u8 => mon_map!(Put::long, |x| H3MQuestObjective::Level(ref x)) |
+        2u8 => mon_map!(mon_tuple!(Put::byte, Put::byte, Put::byte, Put::byte), |x| H3MQuestObjective::Stats(ref x)) |
+        3u8 => mon_map!(Put::long, |x| H3MQuestObjective::DefeatHero(ref x)) |
+        4u8 => mon_map!(Put::long, |x| H3MQuestObjective::DefeatMonster(ref x)) |
+        5u8 => mon_map!(mon_length_count!(Put::byte, Put::artifact2), |x| H3MQuestObjective::Artifacts(ref x)) |
+        6u8 => mon_map!(mon_length_count!(Put::byte, mon_tuple!(Put::creature2, Put::short)), |x| H3MQuestObjective::Creatures(ref x)) |
+        7u8 => mon_map!(Put::resources, |x| H3MQuestObjective::Resources(ref x)) |
+        8u8 => mon_map!(Put::byte, |x| H3MQuestObjective::Hero(ref x)) |
+        9u8 => mon_map!(Put::color, |x| H3MQuestObjective::Color(ref x))
     )
 );
 
@@ -1405,6 +1442,20 @@ w_named!(quest1<H3MQuest>,
         }
     )
 );
+impl Put {
+    fn quest1(o: &mut Vec<u8>, v: &H3MQuest) -> bool {
+        if let &H3MQuest {
+            objective: H3MQuestObjective::Artifacts(ref arts),
+            deadline: 0xFFFFFFFF,
+            ..
+        } = v {
+            if arts.len() == 1 && v.proposal_message.is_empty() &&
+            v.progress_message.is_empty() && v.completion_message.is_empty() {
+                Put::artifact1(o, &arts[0])
+            } else { false }
+        } else { false }
+    }
+}
 
 // AB/SoD
 w_named!(quest2<H3MQuest>,
@@ -1416,6 +1467,18 @@ w_named!(quest2<H3MQuest>,
         completion_message: call!(Eat::string) >>
         (H3MQuest {
             objective, deadline, proposal_message, progress_message, completion_message
+        })
+    )
+);
+mon_named!(quest2<H3MQuest>,
+    mon_do_parse!(
+        objective: mon_call!(Put::quest_objective) >>
+        deadline: mon_call!(Put::long) >>
+        proposal_message: mon_call!(Put::string) >>
+        progress_message: mon_call!(Put::string) >>
+        completion_message: mon_call!(Put::string) >>
+        (H3MQuest {
+            ref objective, ref deadline, ref proposal_message, ref progress_message, ref completion_message
         })
     )
 );
@@ -1562,7 +1625,7 @@ w_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, do_parse!(
         )
     ) >>
     stats: sod!(version, value!(None), option!(tuple!(Eat::byte, Eat::byte, Eat::byte, Eat::byte))) >>
-    _zeros: tag!([0u8; 16]) >>
+    _zeroes: tag!([0u8; 16]) >>
     (H3MObjectProperties::Hero {
         id, owner, hero_type, name, exp, face, skills, garrison, group_formation,
         equipment, patrol_radius, bio, gender, spells, stats,
@@ -1590,7 +1653,7 @@ mon_named_args!(obj_hero(version: H3MVersion)<H3MObjectProperties>, mon_do_parse
         )
     ) >>
     stats: mon_sod!(version, mon_value!(None), mon_option!(mon_tuple!(Put::byte, Put::byte, Put::byte, Put::byte))) >>
-    _zeros: mon_tag!([0u8; 16]) >>
+    _zeroes: mon_tag!([0u8; 16]) >>
     (H3MObjectProperties::Hero {
         ref id, ref owner, ref hero_type, ref name, ref exp, ref face, ref skills, ref garrison, ref group_formation,
         ref equipment, ref patrol_radius, ref bio, ref gender, ref spells, ref stats,
@@ -1700,6 +1763,13 @@ w_named_args!(obj_dwelling(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     level_range: tuple!(Eat::byte, Eat::byte) >>
     (H3MObjectProperties::RandomDwelling { owner, faction, level_range })
 ));
+mon_named_args!(obj_dwelling(_v: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    owner: mon_call!(Put::color) >>
+    _zeroes: mon_tag!([0u8; 3]) >>
+    faction: mon_call!(Put::dwelling_faction) >>
+    level_range: mon_tuple!(Put::byte, Put::byte) >>
+    (H3MObjectProperties::RandomDwelling { ref owner, ref faction, ref level_range })
+));
 
 w_named_args!(obj_dwelling_level(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: call!(Eat::color) >>
@@ -1707,12 +1777,24 @@ w_named_args!(obj_dwelling_level(_v: H3MVersion)<H3MObjectProperties>, do_parse!
     faction: call!(Eat::dwelling_faction) >>
     (H3MObjectProperties::RandomDwellingLevel { owner, faction  })
 ));
+mon_named_args!(obj_dwelling_level(_v: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    owner: mon_call!(Put::color) >>
+    _zeroes: mon_tag!([0u8; 3]) >>
+    faction: mon_call!(Put::dwelling_faction) >>
+    (H3MObjectProperties::RandomDwellingLevel { ref owner, ref faction  })
+));
 
 w_named_args!(obj_dwelling_faction(_v: H3MVersion)<H3MObjectProperties>, do_parse!(
     owner: call!(Eat::color) >>
     _zeroes: tag!([0u8; 3]) >>
     level_range: tuple!(Eat::byte, Eat::byte) >>
     (H3MObjectProperties::RandomDwellingFaction { owner, level_range })
+));
+mon_named_args!(obj_dwelling_faction(_v: H3MVersion)<H3MObjectProperties>, mon_do_parse!(
+    owner: mon_call!(Put::color) >>
+    _zeroes: mon_tag!([0u8; 3]) >>
+    level_range: mon_tuple!(Put::byte, Put::byte) >>
+    (H3MObjectProperties::RandomDwellingFaction { ref owner, ref level_range })
 ));
 
 w_named_args!(obj_resource(version: H3MVersion)<H3MObjectProperties>, do_parse!(
@@ -1739,8 +1821,16 @@ w_named_args!(obj_scroll(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         guard: option!(call!(Eat::msg_guards, version)) >>
         spell: call!(Eat::spell) >>
-        _zeros: tag!([0u8; 3]) >>
+        _zeroes: tag!([0u8; 3]) >>
         (H3MObjectProperties::Scroll { guard, spell })
+    )
+);
+mon_named_args!(obj_scroll(version: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(
+        guard: mon_option!(mon_call!(Put::msg_guards, version)) >>
+        spell: mon_call!(Put::spell) >>
+        _zeroes: mon_tag!([0u8; 3]) >>
+        (H3MObjectProperties::Scroll { ref guard, ref spell })
     )
 );
 
@@ -1748,9 +1838,16 @@ w_named_args!(obj_witch(version: H3MVersion)<H3MObjectProperties>, map!(
     ifeq!(version, H3MVersion::RoE, value!(0x0FFFEFBF), call!(Eat::long)),
     |skills| H3MObjectProperties::Witch { skills }
 ));
+mon_named_args!(obj_witch(version: H3MVersion)<H3MObjectProperties>, mon_map!(
+    mon_ifeq!(version, H3MVersion::RoE, mon_value!(0x0FFFEFBF), mon_call!(Put::long)),
+    |skills| H3MObjectProperties::Witch { ref skills }
+));
 
 w_named_args!(obj_shrine(_v: H3MVersion)<H3MObjectProperties>,
     do_parse!(spell: call!(Eat::byte) >> _zeroes: tag!([0u8; 3]) >> (H3MObjectProperties::Shrine { spell }))
+);
+mon_named_args!(obj_shrine(_v: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(spell: mon_call!(Put::byte) >> _zeroes: mon_tag!([0u8; 3]) >> (H3MObjectProperties::Shrine { ref spell }))
 );
 
 w_named_args!(obj_grail(_v: H3MVersion)<H3MObjectProperties>,
@@ -1773,6 +1870,14 @@ w_named_args!(obj_scholar(_v: H3MVersion)<H3MObjectProperties>,
         bonus_id: call!(Eat::byte) >>
         _zeroes: tag!([0u8; 6]) >>
         (H3MObjectProperties::Scholar { bonus_type, bonus_id })
+    )
+);
+mon_named_args!(obj_scholar(_v: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(
+        bonus_type: mon_call!(Put::byte) >>
+        bonus_id: mon_call!(Put::byte) >>
+        _zeroes: mon_tag!([0u8; 6]) >>
+        (H3MObjectProperties::Scholar { ref bonus_type, ref bonus_id })
     )
 );
 
@@ -1812,11 +1917,25 @@ w_named_args!(obj_seer(version: H3MVersion)<H3MObjectProperties>,
         (H3MObjectProperties::Seer { quest, reward })
     )
 );
+mon_named_args!(obj_seer(version: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(
+        quest: mon_ifeq!(version, H3MVersion::RoE, mon_call!(Put::quest1), mon_call!(Put::quest2)) >>
+        reward: mon_call!(Put::reward, version) >>
+        _zeroes: mon_tag!([0u8; 2]) >>
+        (H3MObjectProperties::Seer { ref quest, ref reward })
+    )
+);
 
 w_named_args!(obj_quest_guard(version: H3MVersion)<H3MObjectProperties>,
     do_parse!(
         quest: ifeq!(version, H3MVersion::RoE, call!(Eat::quest1), call!(Eat::quest2)) >>
         (H3MObjectProperties::QuestGuard { quest })
+    )
+);
+mon_named_args!(obj_quest_guard(version: H3MVersion)<H3MObjectProperties>,
+    mon_do_parse!(
+        quest: mon_ifeq!(version, H3MVersion::RoE, mon_call!(Put::quest1), mon_call!(Put::quest2)) >>
+        (H3MObjectProperties::QuestGuard { ref quest })
     )
 );
 
@@ -1910,16 +2029,16 @@ impl H3MObjectClass {
             Grail => Put::obj_grail,
             OceanBottle | Sign => Put::obj_message,
             RandomResource | Resource => Put::obj_resource,
-            // Scholar => Put::obj_scholar,
-            // SeerHut => Put::obj_seer,
-            // ShrineOfMagicIncantation | ShrineOfMagicGesture | ShrineOfMagicThought => Put::obj_shrine,
-            // SpellScroll => Put::obj_scroll,
-            // WitchHut => Put::obj_witch,
+            Scholar => Put::obj_scholar,
+            SeerHut => Put::obj_seer,
+            ShrineOfMagicIncantation | ShrineOfMagicGesture | ShrineOfMagicThought => Put::obj_shrine,
+            SpellScroll => Put::obj_scroll,
+            WitchHut => Put::obj_witch,
             HeroPlaceholder => Put::obj_placeholder,
-            // QuestGuard => Put::obj_quest_guard,
-            // RandomDwelling => Put::obj_dwelling,
-            // RandomDwellingLevel => Put::obj_dwelling_level,
-            // RandomDwellingFaction => Put::obj_dwelling_faction,
+            QuestGuard => Put::obj_quest_guard,
+            RandomDwelling => Put::obj_dwelling,
+            RandomDwellingLevel => Put::obj_dwelling_level,
+            RandomDwellingFaction => Put::obj_dwelling_faction,
             AbandonedMine => Put::obj_abandoned,
             _ => Put::obj_noprops,
         }
